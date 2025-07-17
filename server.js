@@ -40,12 +40,70 @@ app.get("/tracks", (req, res) => {
   });
 });
 
+// Track current playback state
+let currentState = {
+  track: null,
+  currentTime: 0,
+  isPlaying: false,
+  lastUpdated: Date.now()
+};
+
 // Socket.io
 io.on("connection", socket => {
-  socket.on("play", track => {
-    socket.broadcast.emit("play", track);
+  console.log(`New client connected: ${socket.id}`);
+
+  // Send current state to newly connected client
+  socket.emit('sync', currentState);
+
+  // Handle play/pause/sync events
+  socket.on('play', (track) => {
+    currentState = {
+      track,
+      currentTime: 0,
+      isPlaying: true,
+      lastUpdated: Date.now()
+    };
+    socket.broadcast.emit('play', currentState);
+  });
+
+  socket.on('pause', (time) => {
+    currentState = {
+      ...currentState,
+      currentTime: time,
+      isPlaying: false,
+      lastUpdated: Date.now()
+    };
+    socket.broadcast.emit('pause', currentState);
+  });
+
+  socket.on('sync', (state) => {
+    // Only update if this is newer information
+    if (state.lastUpdated > currentState.lastUpdated) {
+      currentState = state;
+      socket.broadcast.emit('sync', currentState);
+    }
+  });
+
+  socket.on('seek', (time) => {
+    currentState = {
+      ...currentState,
+      currentTime: time,
+      lastUpdated: Date.now()
+    };
+    socket.broadcast.emit('seek', currentState);
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`Client disconnected: ${socket.id}`);
   });
 });
+
+// Periodically update all clients with current state
+setInterval(() => {
+  if (currentState.track) {
+    io.emit('sync', currentState);
+  }
+}, 3000); // Sync every 3 seconds
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
