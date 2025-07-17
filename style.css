@@ -1,0 +1,58 @@
+body {
+  margin: 0;
+  background: #121212;
+  font-family: 'Segoe UI', sans-serif;
+  color: #fff;
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+}
+
+.container {
+  max-width: 600px;
+  width: 100%;
+}
+
+h1 {
+  text-align: center;
+  color: #00ffff;
+}
+
+#playlist {
+  list-style: none;
+  padding: 0;
+}
+
+#playlist li {
+  padding: 10px;
+  border-bottom: 1px solid #333;
+  cursor: pointer;
+}
+
+#playlist li:hover {
+  background-color: #333;
+}
+
+input[type="file"] {
+  color: #fff;
+  background: #222;
+  border: 1px solid #444;
+  padding: 5px;
+  border-radius: 5px;
+}
+
+button {
+  margin-left: 10px;
+  padding: 6px 10px;
+  background: #00ffff;
+  color: #000;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+audio {
+  margin-top: 20px;
+  width: 100%;
+}
+
