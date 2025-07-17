@@ -1,28 +1,24 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JamSync</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
     <header>
         <h1>JamSync</h1>
-        <p>Sync & Jam your music together</p>
+        <p>Sync your music together</p>
     </header>
     <main>
-        <section class="upload">
-            <h2>Upload Music</h2>
-            <input type="file" id="musicUpload" accept="audio/*" multiple>
-        </section>
         <section class="playlist">
             <h2>Playlist</h2>
             <ul id="musicList"></ul>
         </section>
         <audio id="audioPlayer" controls></audio>
     </main>
-    <script src="script.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/script.js"></script>
 </body>
 </html>
