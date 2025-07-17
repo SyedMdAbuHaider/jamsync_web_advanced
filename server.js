@@ -13,13 +13,18 @@ const io = socketIo(server, {
   }
 });
 
-// Set up directories
+// Set up directories - IMPORTANT: Use absolute paths
 const publicDir = path.join(__dirname, "public");
 const musicDir = path.join(__dirname, "music");
 
 // Create directories if they don't exist
-if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir);
-if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir);
+if (!fs.existsSync(publicDir)) {
+  fs.mkdirSync(publicDir, { recursive: true });
+}
+if (!fs.existsSync(musicDir)) {
+  fs.mkdirSync(musicDir, { recursive: true });
+  console.log(`Created music directory at: ${musicDir}`);
+}
 
 // Middleware
 app.use(express.static(publicDir));
@@ -30,14 +35,23 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
-app.get("/tracks", (req, res) => {
-  fs.readdir(musicDir, (err, files) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).send("Error reading music directory");
+app.get("/tracks", async (req, res) => {
+  try {
+    const files = await fs.promises.readdir(musicDir);
+    const audioFiles = files.filter(file => 
+      file.match(/\.(mp3|wav|ogg|m4a|flac)$/i)
+    );
+    
+    if (audioFiles.length === 0) {
+      console.warn(`No music files found in ${musicDir}`);
+      console.warn(`Current directory: ${__dirname}`);
     }
-    res.json(files.filter(file => file.match(/\.(mp3|wav|ogg|m4a)$/i)));
-  });
+    
+    res.json(audioFiles);
+  } catch (err) {
+    console.error("Error reading music directory:", err);
+    res.status(500).json({ error: "Error reading music directory" });
+  }
 });
 
 // Track current playback state
@@ -55,7 +69,6 @@ io.on("connection", socket => {
   // Send current state to newly connected client
   socket.emit('sync', currentState);
 
-  // Handle play/pause/sync events
   socket.on('play', (track) => {
     currentState = {
       track,
@@ -66,46 +79,14 @@ io.on("connection", socket => {
     socket.broadcast.emit('play', currentState);
   });
 
-  socket.on('pause', (time) => {
-    currentState = {
-      ...currentState,
-      currentTime: time,
-      isPlaying: false,
-      lastUpdated: Date.now()
-    };
-    socket.broadcast.emit('pause', currentState);
-  });
-
-  socket.on('sync', (state) => {
-    // Only update if this is newer information
-    if (state.lastUpdated > currentState.lastUpdated) {
-      currentState = state;
-      socket.broadcast.emit('sync', currentState);
-    }
-  });
-
-  socket.on('seek', (time) => {
-    currentState = {
-      ...currentState,
-      currentTime: time,
-      lastUpdated: Date.now()
-    };
-    socket.broadcast.emit('seek', currentState);
-  });
-
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
   });
 });
 
-// Periodically update all clients with current state
-setInterval(() => {
-  if (currentState.track) {
-    io.emit('sync', currentState);
-  }
-}, 3000); // Sync every 3 seconds
-
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Serving music from: ${musicDir}`);
+  console.log(`Public files from: ${publicDir}`);
 });
