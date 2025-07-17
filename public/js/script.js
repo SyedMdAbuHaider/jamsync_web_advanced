@@ -2,36 +2,50 @@ const socket = io();
 const musicList = document.getElementById('musicList');
 const audioPlayer = document.getElementById('audioPlayer');
 const playPauseBtn = document.getElementById('playPauseBtn');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const currentTrackName = document.getElementById('currentTrackName');
+const currentArtist = document.getElementById('currentArtist');
+const nowPlayingMobile = document.getElementById('nowPlayingMobile');
+const songProgress = document.getElementById('songProgress');
+const currentTime = document.getElementById('currentTime');
+const totalTime = document.getElementById('totalTime');
+const searchInput = document.getElementById('searchInput');
+
 let currentTrack = null;
+let tracks = [];
 
 // Load tracks from server
 function loadTracks() {
     fetch('/tracks')
         .then(response => response.json())
-        .then(tracks => {
-            musicList.innerHTML = '';
-            tracks.forEach((track, index) => {
-                const trackElement = document.createElement('div');
-                trackElement.className = 'track';
-                trackElement.innerHTML = `
-                    <div class="track-index">${index + 1}</div>
-                    <div class="track-title">
-                        <div class="track-name">${track.replace(/\.[^/.]+$/, "")}</div>
-                    </div>
-                    <div class="track-album">JamSync</div>
-                    <div class="track-duration">--:--</div>
-                `;
-                
-                trackElement.addEventListener('click', () => {
-                    playTrack(track);
-                    // Highlight the selected track
-                    document.querySelectorAll('.track').forEach(t => t.classList.remove('active'));
-                    trackElement.classList.add('active');
-                });
-                
-                musicList.appendChild(trackElement);
-            });
+        .then(loadedTracks => {
+            tracks = loadedTracks;
+            renderTracks(loadedTracks);
         });
+}
+
+// Render tracks to the list
+function renderTracks(tracksToRender) {
+    musicList.innerHTML = '';
+    tracksToRender.forEach((track, index) => {
+        const trackElement = document.createElement('div');
+        trackElement.className = 'track';
+        trackElement.innerHTML = `
+            <div class="track-number">${index + 1}</div>
+            <div class="track-info">
+                <div class="track-title">${formatTrackName(track)}</div>
+                <div class="track-artist">JamSync</div>
+            </div>
+            <div class="track-duration">--:--</div>
+        `;
+        
+        trackElement.addEventListener('click', () => {
+            playTrack(track);
+        });
+        
+        musicList.appendChild(trackElement);
+    });
 }
 
 // Play track function
@@ -40,15 +54,29 @@ function playTrack(track) {
     audioPlayer.src = `/music/${encodeURIComponent(track)}`;
     audioPlayer.play();
     
-    // Update player bar
-    document.querySelector('.track-name').textContent = track.replace(/\.[^/.]+$/, "");
-    document.querySelector('.artist-name').textContent = "JamSync";
+    // Update player info
+    currentTrackName.textContent = formatTrackName(track);
+    currentArtist.textContent = "JamSync";
+    nowPlayingMobile.querySelector('span').textContent = formatTrackName(track);
     
     // Notify other clients
     socket.emit('play', track);
     
-    // Change play button to pause
+    // Update play button
     playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+    
+    // Highlight the selected track
+    document.querySelectorAll('.track').forEach(t => t.classList.remove('active'));
+    const trackElements = Array.from(document.querySelectorAll('.track'));
+    const trackIndex = tracks.indexOf(track);
+    if (trackIndex >= 0 && trackElements[trackIndex]) {
+        trackElements[trackIndex].classList.add('active');
+    }
+}
+
+// Format track name (remove extension)
+function formatTrackName(track) {
+    return track.replace(/\.[^/.]+$/, "");
 }
 
 // Play/Pause button click
@@ -57,11 +85,31 @@ playPauseBtn.addEventListener('click', () => {
         if (currentTrack) {
             audioPlayer.play();
             playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+        } else if (tracks.length > 0) {
+            playTrack(tracks[0]);
         }
     } else {
         audioPlayer.pause();
         playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
     }
+});
+
+// Previous track button
+prevBtn.addEventListener('click', () => {
+    if (!currentTrack || tracks.length === 0) return;
+    
+    const currentIndex = tracks.indexOf(currentTrack);
+    const prevIndex = (currentIndex - 1 + tracks.length) % tracks.length;
+    playTrack(tracks[prevIndex]);
+});
+
+// Next track button
+nextBtn.addEventListener('click', () => {
+    if (!currentTrack || tracks.length === 0) return;
+    
+    const currentIndex = tracks.indexOf(currentTrack);
+    const nextIndex = (currentIndex + 1) % tracks.length;
+    playTrack(tracks[nextIndex]);
 });
 
 // Handle play events from other clients
@@ -74,20 +122,14 @@ socket.on('play', (track) => {
 // Update progress bar
 audioPlayer.addEventListener('timeupdate', () => {
     const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
-    document.querySelector('.progress').style.width = `${progress}%`;
+    songProgress.style.width = `${progress}%`;
     
     // Update time display
-    document.querySelector('.time-current').textContent = formatTime(audioPlayer.currentTime);
-    document.querySelector('.time-total').textContent = formatTime(audioPlayer.duration);
+    currentTime.textContent = formatTime(audioPlayer.currentTime);
+    if (!isNaN(audioPlayer.duration)) {
+        totalTime.textContent = formatTime(audioPlayer.duration);
+    }
 });
-
-// Format time (seconds to MM:SS)
-function formatTime(seconds) {
-    if (isNaN(seconds)) return "--:--";
-    const minutes = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
-}
 
 // Click on progress bar to seek
 document.querySelector('.progress-bar').addEventListener('click', (e) => {
@@ -96,6 +138,23 @@ document.querySelector('.progress-bar').addEventListener('click', (e) => {
     const progressBarWidth = progressBar.clientWidth;
     const seekTime = (clickPosition / progressBarWidth) * audioPlayer.duration;
     audioPlayer.currentTime = seekTime;
+});
+
+// Format time (seconds to MM:SS)
+function formatTime(seconds) {
+    if (isNaN(seconds)) return "0:00";
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+// Search functionality
+searchInput.addEventListener('input', (e) => {
+    const searchTerm = e.target.value.toLowerCase();
+    const filteredTracks = tracks.filter(track => 
+        track.toLowerCase().includes(searchTerm)
+    );
+    renderTracks(filteredTracks);
 });
 
 // Initialize
