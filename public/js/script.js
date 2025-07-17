@@ -1,80 +1,78 @@
 const socket = io();
 const audioPlayer = document.getElementById('audioPlayer');
-let currentTrack = null;
 let isSyncing = false;
-let lastSyncTime = 0;
 
-// When receiving play command from server
-socket.on('play', (data) => {
-    // Don't react to our own sync messages
-    if (data.socketId === socket.id) return;
-    
-    if (data.track !== currentTrack) {
-        // New track to play
-        currentTrack = data.track;
-        audioPlayer.src = `/music/${encodeURIComponent(data.track)}`;
-        audioPlayer.currentTime = data.currentTime || 0;
-        audioPlayer.play();
-        updateUI(data.track);
-    } else {
-        // Sync existing track
-        isSyncing = true;
-        const timeDifference = Math.abs(audioPlayer.currentTime - data.currentTime);
-        
-        // Only adjust if difference is significant (>1 second)
-        if (timeDifference > 1) {
-            audioPlayer.currentTime = data.currentTime;
-        }
-        
-        // Force play if we're paused but should be playing
-        if (audioPlayer.paused && data.isPlaying) {
-            audioPlayer.play();
-        }
-    }
-});
-
-// When audio starts playing
-audioPlayer.addEventListener('play', () => {
-    if (!isSyncing) {
-        syncState();
-    }
-    isSyncing = false;
-});
-
-// When audio is paused
-audioPlayer.addEventListener('pause', () => {
-    if (!isSyncing) {
-        syncState();
-    }
-    isSyncing = false;
-});
-
-// Regularly sync playback position
-audioPlayer.addEventListener('timeupdate', () => {
-    const now = Date.now();
-    // Only sync every 3 seconds to reduce network traffic
-    if (now - lastSyncTime > 3000) {
-        syncState();
-        lastSyncTime = now;
-    }
-});
-
-// Send current state to other clients
-function syncState() {
-    socket.emit('sync', {
-        track: currentTrack,
-        currentTime: audioPlayer.currentTime,
-        isPlaying: !audioPlayer.paused,
-        socketId: socket.id
-    });
+// Load and display tracks
+async function loadTracks() {
+  const response = await fetch('/tracks');
+  const tracks = await response.json();
+  
+  const musicList = document.getElementById('musicList');
+  musicList.innerHTML = '';
+  
+  tracks.forEach(track => {
+    const li = document.createElement('li');
+    li.textContent = track.name;
+    li.onclick = () => {
+      if (!isSyncing) {
+        socket.emit('play', track.url);
+        playTrack(track.url);
+      }
+    };
+    musicList.appendChild(li);
+  });
 }
 
-// Play track function (modified)
-function playTrack(track) {
-    currentTrack = track;
-    audioPlayer.src = `/music/${encodeURIComponent(track)}`;
-    audioPlayer.currentTime = 0;
+// Play track with sync
+function playTrack(url) {
+  isSyncing = true;
+  audioPlayer.src = url;
+  audioPlayer.currentTime = 0;
+  audioPlayer.play().then(() => {
+    isSyncing = false;
+  });
+}
+
+// Sync handlers
+socket.on('play', (state) => {
+  if (audioPlayer.src !== state.currentTrack) {
+    audioPlayer.src = state.currentTrack;
+  }
+  audioPlayer.currentTime = state.position;
+  if (!audioPlayer.paused && !state.isPlaying) {
+    audioPlayer.pause();
+  } else if (audioPlayer.paused && state.isPlaying) {
     audioPlayer.play();
-    updateUI(track);
-    syncState();
-}
+  }
+});
+
+socket.on('seek', (position) => {
+  if (Math.abs(audioPlayer.currentTime - position) > 1) {
+    audioPlayer.currentTime = position;
+  }
+});
+
+// Send local player events
+audioPlayer.addEventListener('play', () => {
+  if (!isSyncing) {
+    socket.emit('play', {
+      currentTrack: audioPlayer.src,
+      position: audioPlayer.currentTime
+    });
+  }
+});
+
+audioPlayer.addEventListener('pause', () => {
+  if (!isSyncing) {
+    socket.emit('pause', audioPlayer.currentTime);
+  }
+});
+
+audioPlayer.addEventListener('timeupdate', () => {
+  if (!isSyncing && audioPlayer.currentTime % 5 < 0.1) {
+    socket.emit('seek', audioPlayer.currentTime);
+  }
+});
+
+// Initial load
+loadTracks();
