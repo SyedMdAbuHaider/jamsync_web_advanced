@@ -9,91 +9,102 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
+    methods: ["GET"]
   }
 });
 
 // Configuration
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MUSIC_DIR = path.join(__dirname, 'music');
 
-// Ensure directories exist
-async function initializeDirectories() {
-  try {
-    await fs.mkdir(PUBLIC_DIR, { recursive: true });
-    await fs.mkdir(MUSIC_DIR, { recursive: true });
-    console.log(`Directories verified:
-    - Public: ${PUBLIC_DIR}
-    - Music: ${MUSIC_DIR}`);
-  } catch (err) {
-    console.error('Directory initialization failed:', err);
-    process.exit(1);
-  }
-}
-
-// Get music files with error handling
-async function getMusicFiles() {
+// Verify music files exist
+async function verifyMusicFiles() {
   try {
     const files = await fs.readdir(MUSIC_DIR);
-    return files.filter(file => /\.(mp3|wav|ogg|m4a|flac)$/i.test(file));
+    const audioFiles = files.filter(file => 
+      /\.(mp3|wav|ogg|m4a|flac)$/i.test(file)
+    );
+    
+    console.log('Found music files:', audioFiles);
+    
+    if (audioFiles.length === 0) {
+      console.warn('No music files found in /music directory');
+      console.warn('Please ensure:');
+      console.warn('1. Your music files are committed to GitHub');
+      console.warn('2. Files are in the /music folder');
+      console.warn('3. File extensions are .mp3, .wav, .ogg, .m4a, or .flac');
+      
+      // Create a test file for debugging
+      const testFile = path.join(MUSIC_DIR, 'test.mp3');
+      await fs.writeFile(testFile, '');
+      console.log('Created test.mp3 for debugging');
+      return ['test.mp3'];
+    }
+    
+    return audioFiles;
   } catch (err) {
-    console.error('Error reading music directory:', err);
+    console.error('Error verifying music files:', err);
     return [];
   }
 }
 
-// Middleware
-app.use(express.static(PUBLIC_DIR));
-app.use('/music', express.static(MUSIC_DIR));
+// Initialize server
+async function initializeServer() {
+  try {
+    // Middleware
+    app.use(express.static(PUBLIC_DIR));
+    app.use('/music', express.static(MUSIC_DIR, {
+      setHeaders: (res, path) => {
+        res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+      }
+    }));
 
-// Routes
-app.get('/', (req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
-});
+    // Routes
+    app.get('/', (req, res) => {
+      res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+    });
 
-app.get('/tracks', async (req, res) => {
-  const tracks = await getMusicFiles();
-  
-  if (tracks.length === 0) {
-    console.warn('No music files found. Please add files to:', MUSIC_DIR);
-    // Create a dummy file for testing if none exist
-    const testFilePath = path.join(MUSIC_DIR, 'test.mp3');
-    try {
-      await fs.writeFile(testFilePath, '');
-      console.log('Created test.mp3 for debugging');
-      tracks.push('test.mp3');
-    } catch (err) {
-      console.error('Could not create test file:', err);
-    }
+    app.get('/tracks', async (req, res) => {
+      const tracks = await verifyMusicFiles();
+      res.json(tracks);
+    });
+
+    // Socket.io
+    io.on('connection', (socket) => {
+      console.log('Client connected:', socket.id);
+      
+      socket.on('disconnect', () => {
+        console.log('Client disconnected:', socket.id);
+      });
+    });
+
+    // Start server
+    server.listen(PORT, () => {
+      console.log(`
+      ====================================
+      JamSync Server Running
+      Port: ${PORT}
+      Music Directory: ${MUSIC_DIR}
+      Public Directory: ${PUBLIC_DIR}
+      
+      Important Notes for GitHub Deployment:
+      1. Music files must be committed to GitHub
+      2. Files must be in /music directory
+      3. Supported formats: .mp3, .wav, .ogg, .m4a, .flac
+      
+      Test your endpoints:
+      - Tracks list: http://localhost:${PORT}/tracks
+      - Music files: http://localhost:${PORT}/music/[filename]
+      ====================================
+      `);
+    });
+
+  } catch (err) {
+    console.error('Server initialization failed:', err);
+    process.exit(1);
   }
-  
-  res.json(tracks);
-});
-
-// Socket.io
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
-  
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-  });
-});
-
-// Startup
-async function startServer() {
-  await initializeDirectories();
-  
-  server.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    console.log('Endpoints:');
-    console.log(`- Main app: http://localhost:${PORT}`);
-    console.log(`- Tracks API: http://localhost:${PORT}/tracks`);
-    console.log(`- Music files: http://localhost:${PORT}/music/[filename]`);
-  });
 }
 
-startServer().catch(err => {
-  console.error('Server startup failed:', err);
-  process.exit(1);
-});
+// Start the server
+initializeServer();
