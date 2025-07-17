@@ -1,4 +1,3 @@
-
 const express = require("express");
 const multer = require("multer");
 const http = require("http");
@@ -9,6 +8,12 @@ const fs = require("fs");
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
+
+// Ensure music directory exists
+const musicDir = path.join(__dirname, "music");
+if (!fs.existsSync(musicDir)) {
+  fs.mkdirSync(musicDir);
+}
 
 const upload = multer({ dest: "music/" });
 
@@ -23,7 +28,7 @@ app.get("/", (req, res) => {
 
 app.post("/upload", upload.single("music"), (req, res) => {
   const ext = path.extname(req.file.originalname);
-  const newPath = `music/${req.file.originalname}`;
+  const newPath = path.join("music", req.file.originalname);
   fs.renameSync(req.file.path, newPath);
   res.sendStatus(200);
 });
@@ -39,6 +44,8 @@ io.on("connection", socket => {
   });
 });
 
-server.listen(3000, () => {
-  console.log("Server running on http://localhost:3000");
+// ✅ Use environment port for Render compatibility
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
 });
