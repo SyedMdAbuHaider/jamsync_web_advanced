@@ -1,35 +1,44 @@
+
 const express = require("express");
 const multer = require("multer");
-const fs = require("fs");
+const http = require("http");
+const socketIo = require("socket.io");
 const path = require("path");
+const fs = require("fs");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const server = http.createServer(app);
+const io = socketIo(server);
 
-app.use(express.static(__dirname));
+const upload = multer({ dest: "music/" });
 
-const musicDir = path.join(__dirname, "music");
-if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir);
+app.use("/music", express.static(path.join(__dirname, "music")));
+app.use("/css", express.static(path.join(__dirname, "public/css")));
+app.use("/js", express.static(path.join(__dirname, "public/js")));
+app.use("/socket.io", express.static(path.join(__dirname, "node_modules/socket.io/client-dist")));
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, musicDir),
-  filename: (req, file, cb) => cb(null, file.originalname)
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public/index.html"));
 });
-const upload = multer({ storage });
 
 app.post("/upload", upload.single("music"), (req, res) => {
-  res.send("Uploaded");
+  const ext = path.extname(req.file.originalname);
+  const newPath = `music/${req.file.originalname}`;
+  fs.renameSync(req.file.path, newPath);
+  res.sendStatus(200);
 });
 
-app.get("/music", (req, res) => {
-  fs.readdir(musicDir, (err, files) => {
-    if (err) return res.status(500).send("Error reading music folder");
-    const mp3s = files.filter(f => f.endsWith(".mp3"));
-    res.json(mp3s);
+app.get("/tracks", (req, res) => {
+  const files = fs.readdirSync("./music");
+  res.json(files);
+});
+
+io.on("connection", socket => {
+  socket.on("play", track => {
+    socket.broadcast.emit("play", track);
   });
 });
 
-app.use("/music", express.static(musicDir));
-
-app.listen(PORT, () => console.log(`JamSync running on port ${PORT}`));
-
+server.listen(3000, () => {
+  console.log("Server running on http://localhost:3000");
+});

@@ -1,25 +1,19 @@
-document.addEventListener("DOMContentLoaded", async () => {
-  const audio = document.getElementById("audioPlayer");
-  const playlist = document.getElementById("playlist");
 
-  const res = await fetch("/music");
-  const files = await res.json();
+const musicUpload = document.getElementById('musicUpload');
+const musicList = document.getElementById('musicList');
+const audioPlayer = document.getElementById('audioPlayer');
 
-  files.forEach((file) => {
-    const li = document.createElement("li");
-    li.textContent = file;
-    li.onclick = () => {
-      audio.src = `/music/${file}`;
-      audio.play();
-    };
-    playlist.appendChild(li);
-  });
+musicUpload.addEventListener('change', (event) => {
+    const files = Array.from(event.target.files);
+    musicList.innerHTML = '';
 
-  document.getElementById("uploadForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const form = new FormData(e.target);
-    await fetch("/upload", { method: "POST", body: form });
-    location.reload();
-  });
+    files.forEach(file => {
+        const listItem = document.createElement('li');
+        listItem.textContent = file.name;
+        listItem.addEventListener('click', () => {
+            audioPlayer.src = URL.createObjectURL(file);
+            audioPlayer.play();
+        });
+        musicList.appendChild(listItem);
+    });
 });
-
