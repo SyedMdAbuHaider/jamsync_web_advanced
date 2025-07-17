@@ -1,96 +1,58 @@
 const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
 const axios = require('axios');
-
 const app = express();
-const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET"]
-  }
-});
 
 const DRIVE_FOLDER_ID = '1SfzWcO3mDSoQYHwSRVBdyt57T3YaroSc';
-let cachedTracks = [];
 
-// Scrape Drive folder for audio files
-async function refreshTracks() {
+// New improved track loader
+async function loadDriveTracks() {
   try {
-    const { data } = await axios.get(
-      `https://drive.google.com/drive/folders/${DRIVE_FOLDER_ID}`
+    const response = await axios.get(
+      `https://drive.google.com/drive/folders/${DRIVE_FOLDER_ID}?usp=sharing`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0' // Bypass potential blocking
+        }
+      }
     );
+
+    // Improved regex pattern
+    const regex = /\["([^"]+\.(mp3|wav|ogg|m4a))","([^"]+)",\d+,\d+,null,\d+,\["([^"]+)"/g;
+    const matches = [...response.data.matchAll(regex)];
     
-    const regex = /\["([^"]+\.(mp3|wav|ogg|m4a))","([^"]+)",\d+,\d+/g;
-    const matches = [...data.matchAll(regex)];
-    
-    cachedTracks = matches.map(match => ({
+    return matches.map(match => ({
       name: match[1].replace(/\.[^/.]+$/, ''),
-      id: match[3],
-      url: `https://drive.google.com/uc?export=view&id=${match[3]}`
+      id: match[4] || match[3], // Try both possible ID positions
+      url: `https://drive.google.com/uc?export=download&id=${match[4] || match[3]}`
     }));
-    
-    console.log('Refreshed tracks:', cachedTracks.length);
   } catch (err) {
-    console.error('Drive refresh failed:', err.message);
+    console.error('Drive loading error:', err.message);
+    return [];
   }
 }
 
-// Auto-refresh every 6 hours
-setInterval(refreshTracks, 6 * 60 * 60 * 1000);
-refreshTracks(); // Initial load
+// Cache tracks for 1 hour
+let cachedTracks = [];
+let lastRefresh = 0;
 
-// API Endpoint
-app.get('/tracks', (req, res) => {
-  res.json(cachedTracks.length > 0 ? cachedTracks : [
-    { name: "Demo Track", url: "https://example.com/fallback.mp3" }
-  ]);
-});
-
-// Sync State
-let playbackState = {
-  currentTrack: null,
-  position: 0,
-  isPlaying: false,
-  lastUpdated: Date.now()
-};
-
-// Socket.io Sync
-io.on('connection', (socket) => {
-  // Send current state to new clients
-  socket.emit('sync', playbackState);
+app.get('/tracks', async (req, res) => {
+  // Refresh cache if older than 1 hour
+  if (Date.now() - lastRefresh > 3600000) {
+    cachedTracks = await loadDriveTracks();
+    lastRefresh = Date.now();
+    console.log('Refreshed tracks:', cachedTracks.length);
+  }
   
-  // Handle playback events
-  socket.on('play', (trackUrl) => {
-    playbackState = {
-      currentTrack: trackUrl,
-      position: 0,
-      isPlaying: true,
-      lastUpdated: Date.now()
-    };
-    socket.broadcast.emit('play', playbackState);
-  });
-
-  socket.on('pause', (position) => {
-    playbackState = {
-      ...playbackState,
-      position,
-      isPlaying: false,
-      lastUpdated: Date.now()
-    };
-    socket.broadcast.emit('pause', playbackState);
-  });
-
-  socket.on('seek', (position) => {
-    playbackState.position = position;
-    playbackState.lastUpdated = Date.now();
-    socket.broadcast.emit('seek', position);
-  });
+  res.json(cachedTracks.length > 0 ? cachedTracks : [{
+    name: "Demo Track (Add files to Drive)",
+    url: "https://example.com/fallback.mp3"
+  }]);
 });
 
-// Start server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server ready at http://localhost:${PORT}`);
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`Server ready. Load tracks from: http://localhost:${PORT}/tracks`);
+  loadDriveTracks().then(tracks => {
+    console.log('Initial load found:', tracks.length, 'tracks');
+  });
 });
