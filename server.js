@@ -1,8 +1,7 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const path = require('path');
-const fs = require('fs').promises;
+const axios = require('axios');
 
 const app = express();
 const server = http.createServer(app);
@@ -13,98 +12,85 @@ const io = socketIo(server, {
   }
 });
 
-// Configuration
-const PORT = process.env.PORT || 10000;
-const PUBLIC_DIR = path.join(__dirname, 'public');
-const MUSIC_DIR = path.join(__dirname, 'music');
+const DRIVE_FOLDER_ID = '1SfzWcO3mDSoQYHwSRVBdyt57T3YaroSc';
+let cachedTracks = [];
 
-// Verify music files exist
-async function verifyMusicFiles() {
+// Scrape Drive folder for audio files
+async function refreshTracks() {
   try {
-    const files = await fs.readdir(MUSIC_DIR);
-    const audioFiles = files.filter(file => 
-      /\.(mp3|wav|ogg|m4a|flac)$/i.test(file)
+    const { data } = await axios.get(
+      `https://drive.google.com/drive/folders/${DRIVE_FOLDER_ID}`
     );
     
-    console.log('Found music files:', audioFiles);
+    const regex = /\["([^"]+\.(mp3|wav|ogg|m4a))","([^"]+)",\d+,\d+/g;
+    const matches = [...data.matchAll(regex)];
     
-    if (audioFiles.length === 0) {
-      console.warn('No music files found in /music directory');
-      console.warn('Please ensure:');
-      console.warn('1. Your music files are committed to GitHub');
-      console.warn('2. Files are in the /music folder');
-      console.warn('3. File extensions are .mp3, .wav, .ogg, .m4a, or .flac');
-      
-      // Create a test file for debugging
-      const testFile = path.join(MUSIC_DIR, 'test.mp3');
-      await fs.writeFile(testFile, '');
-      console.log('Created test.mp3 for debugging');
-      return ['test.mp3'];
-    }
-    
-    return audioFiles;
-  } catch (err) {
-    console.error('Error verifying music files:', err);
-    return [];
-  }
-}
-
-// Initialize server
-async function initializeServer() {
-  try {
-    // Middleware
-    app.use(express.static(PUBLIC_DIR));
-    app.use('/music', express.static(MUSIC_DIR, {
-      setHeaders: (res, path) => {
-        res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
-      }
+    cachedTracks = matches.map(match => ({
+      name: match[1].replace(/\.[^/.]+$/, ''),
+      id: match[3],
+      url: `https://drive.google.com/uc?export=view&id=${match[3]}`
     }));
-
-    // Routes
-    app.get('/', (req, res) => {
-      res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
-    });
-
-    app.get('/tracks', async (req, res) => {
-      const tracks = await verifyMusicFiles();
-      res.json(tracks);
-    });
-
-    // Socket.io
-    io.on('connection', (socket) => {
-      console.log('Client connected:', socket.id);
-      
-      socket.on('disconnect', () => {
-        console.log('Client disconnected:', socket.id);
-      });
-    });
-
-    // Start server
-    server.listen(PORT, () => {
-      console.log(`
-      ====================================
-      JamSync Server Running
-      Port: ${PORT}
-      Music Directory: ${MUSIC_DIR}
-      Public Directory: ${PUBLIC_DIR}
-      
-      Important Notes for GitHub Deployment:
-      1. Music files must be committed to GitHub
-      2. Files must be in /music directory
-      3. Supported formats: .mp3, .wav, .ogg, .m4a, .flac
-      
-      Test your endpoints:
-      - Tracks list: http://localhost:${PORT}/tracks
-      - Music files: http://localhost:${PORT}/music/[filename]
-      ====================================
-      `);
-    });
-
+    
+    console.log('Refreshed tracks:', cachedTracks.length);
   } catch (err) {
-    console.error('Server initialization failed:', err);
-    process.exit(1);
+    console.error('Drive refresh failed:', err.message);
   }
 }
 
-// Start the server
-initializeServer();
+// Auto-refresh every 6 hours
+setInterval(refreshTracks, 6 * 60 * 60 * 1000);
+refreshTracks(); // Initial load
+
+// API Endpoint
+app.get('/tracks', (req, res) => {
+  res.json(cachedTracks.length > 0 ? cachedTracks : [
+    { name: "Demo Track", url: "https://example.com/fallback.mp3" }
+  ]);
+});
+
+// Sync State
+let playbackState = {
+  currentTrack: null,
+  position: 0,
+  isPlaying: false,
+  lastUpdated: Date.now()
+};
+
+// Socket.io Sync
+io.on('connection', (socket) => {
+  // Send current state to new clients
+  socket.emit('sync', playbackState);
+  
+  // Handle playback events
+  socket.on('play', (trackUrl) => {
+    playbackState = {
+      currentTrack: trackUrl,
+      position: 0,
+      isPlaying: true,
+      lastUpdated: Date.now()
+    };
+    socket.broadcast.emit('play', playbackState);
+  });
+
+  socket.on('pause', (position) => {
+    playbackState = {
+      ...playbackState,
+      position,
+      isPlaying: false,
+      lastUpdated: Date.now()
+    };
+    socket.broadcast.emit('pause', playbackState);
+  });
+
+  socket.on('seek', (position) => {
+    playbackState.position = position;
+    playbackState.lastUpdated = Date.now();
+    socket.broadcast.emit('seek', position);
+  });
+});
+
+// Start server
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Server ready at http://localhost:${PORT}`);
+});
