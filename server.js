@@ -1,121 +1,99 @@
-const express = require("express");
-const http = require("http");
-const socketIo = require("socket.io");
-const path = require("path");
-const fs = require("fs").promises; // Using promises for better performance
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+const path = require('path');
+const fs = require('fs').promises;
 
 const app = express();
 const server = http.createServer(app);
-
-// Configure Socket.IO with leaner settings
 const io = socketIo(server, {
   cors: {
     origin: "*",
-    methods: ["GET"]
-  },
-  transports: ['websocket'], // Force WebSocket only for better performance
-  pingInterval: 10000,       // Reduce ping frequency
-  pingTimeout: 5000          // Faster timeout detection
+    methods: ["GET", "POST"]
+  }
 });
 
-// Cache music files list
-let cachedTracks = [];
-let lastCacheUpdate = 0;
-const CACHE_TTL = 30000; // 30 seconds cache
+// Configuration
+const PORT = process.env.PORT || 3000;
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const MUSIC_DIR = path.join(__dirname, 'music');
 
-// Set up directories using absolute paths
-const publicDir = path.resolve(__dirname, "public");
-const musicDir = path.resolve(__dirname, "music");
-
-// Pre-create directories on startup
-(async () => {
+// Ensure directories exist
+async function initializeDirectories() {
   try {
-    await fs.mkdir(publicDir, { recursive: true });
-    await fs.mkdir(musicDir, { recursive: true });
-    console.log(`Directories ready. Music directory: ${musicDir}`);
-    
-    // Initial cache load
-    cachedTracks = await getMusicFiles();
-    lastCacheUpdate = Date.now();
+    await fs.mkdir(PUBLIC_DIR, { recursive: true });
+    await fs.mkdir(MUSIC_DIR, { recursive: true });
+    console.log(`Directories verified:
+    - Public: ${PUBLIC_DIR}
+    - Music: ${MUSIC_DIR}`);
   } catch (err) {
-    console.error("Startup error:", err);
+    console.error('Directory initialization failed:', err);
+    process.exit(1);
   }
-})();
+}
 
-// Optimized middleware
-app.use(express.static(publicDir, {
-  maxAge: '1d',          // Cache static files for 1 day
-  immutable: true        // Tell browsers files won't change
-}));
-
-app.use("/music", express.static(musicDir, {
-  maxAge: '1d',
-  setHeaders: (res, path) => {
-    if (path.endsWith('.mp3') || path.endsWith('.wav')) {
-      res.set('Accept-Ranges', 'bytes'); // Enable streaming
-    }
-  }
-}));
-
-// Helper function to get music files with caching
+// Get music files with error handling
 async function getMusicFiles() {
-  const now = Date.now();
-  if (now - lastCacheUpdate < CACHE_TTL) {
-    return cachedTracks;
-  }
-
   try {
-    const files = await fs.readdir(musicDir);
-    const audioFiles = files.filter(file => 
-      /\.(mp3|wav|ogg|m4a|flac)$/i.test(file)
-    );
-    cachedTracks = audioFiles;
-    lastCacheUpdate = now;
-    return audioFiles;
+    const files = await fs.readdir(MUSIC_DIR);
+    return files.filter(file => /\.(mp3|wav|ogg|m4a|flac)$/i.test(file));
   } catch (err) {
-    console.error("Error reading music directory:", err);
+    console.error('Error reading music directory:', err);
     return [];
   }
 }
 
-// Optimized routes
-app.get("/", (req, res) => {
-  res.sendFile(path.join(publicDir, "index.html"));
+// Middleware
+app.use(express.static(PUBLIC_DIR));
+app.use('/music', express.static(MUSIC_DIR));
+
+// Routes
+app.get('/', (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
-app.get("/tracks", async (req, res) => {
-  try {
-    const tracks = await getMusicFiles();
-    res.json(tracks);
-  } catch (err) {
-    console.error("Tracks endpoint error:", err);
-    res.status(500).json({ error: "Server error" });
+app.get('/tracks', async (req, res) => {
+  const tracks = await getMusicFiles();
+  
+  if (tracks.length === 0) {
+    console.warn('No music files found. Please add files to:', MUSIC_DIR);
+    // Create a dummy file for testing if none exist
+    const testFilePath = path.join(MUSIC_DIR, 'test.mp3');
+    try {
+      await fs.writeFile(testFilePath, '');
+      console.log('Created test.mp3 for debugging');
+      tracks.push('test.mp3');
+    } catch (err) {
+      console.error('Could not create test file:', err);
+    }
   }
+  
+  res.json(tracks);
 });
 
-// Lightweight Socket.IO handling
-io.on("connection", (socket) => {
-  socket.emit("ready", { status: "connected" });
-
-  socket.on("disconnect", () => {
-    socket.removeAllListeners();
+// Socket.io
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+  
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
   });
 });
 
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.status(200).send("OK");
-});
+// Startup
+async function startServer() {
+  await initializeDirectories();
+  
+  server.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    console.log('Endpoints:');
+    console.log(`- Main app: http://localhost:${PORT}`);
+    console.log(`- Tracks API: http://localhost:${PORT}/tracks`);
+    console.log(`- Music files: http://localhost:${PORT}/music/[filename]`);
+  });
+}
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error("Unhandled error:", err);
-  res.status(500).send("Server error");
-});
-
-// Start server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Music directory: ${musicDir}`);
+startServer().catch(err => {
+  console.error('Server startup failed:', err);
+  process.exit(1);
 });
