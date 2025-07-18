@@ -9,66 +9,67 @@ const nowPlayingMobile = document.getElementById('nowPlayingMobile');
 
 let tracks = [];
 let currentTrackIndex = -1;
+let isSyncing = false;
+let lastSyncTime = 0;
 
-// Load saved state
+// Initialize with saved state
 const savedState = JSON.parse(localStorage.getItem('jamsync-state')) || {};
 
-// Fetch tracks
+// Load tracks and restore state
 fetch('/tracks')
   .then(res => res.json())
   .then(loadedTracks => {
     tracks = loadedTracks;
     renderTrackList(tracks);
     
-    // Restore playback if available
     if (savedState.trackUrl) {
       currentTrackIndex = tracks.findIndex(t => t.url === savedState.trackUrl);
       if (currentTrackIndex !== -1) {
-        audioPlayer.src = savedState.trackUrl;
-        audioPlayer.currentTime = savedState.position || 0;
-        if (savedState.isPlaying) {
-          audioPlayer.play().catch(e => console.log("Playback error:", e));
-          playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
-        }
-        updateNowPlaying();
+        loadTrack(tracks[currentTrackIndex], savedState.position || 0, savedState.isPlaying);
       }
     }
   });
 
-// Render track list
-function renderTrackList(trackList) {
-  musicList.innerHTML = '';
-  trackList.forEach((track, index) => {
-    const trackEl = document.createElement('div');
-    trackEl.className = `track ${index === currentTrackIndex ? 'active' : ''}`;
-    trackEl.innerHTML = `
-      <div class="track-number">${index + 1}</div>
-      <div class="track-info">
-        <div class="track-title">${track.name}</div>
-        <div class="track-artist">JamSync</div>
-      </div>
-      <div class="track-duration">--:--</div>
-    `;
-    trackEl.addEventListener('click', () => playTrack(track, index));
-    musicList.appendChild(trackEl);
-  });
+// Precision track loading
+function loadTrack(track, position = 0, shouldPlay = false) {
+  isSyncing = true;
+  audioPlayer.src = track.url;
+  audioPlayer.currentTime = position;
+  
+  audioPlayer.onloadedmetadata = () => {
+    socket.emit('track-duration', { 
+      url: track.url, 
+      duration: audioPlayer.duration 
+    });
+    
+    if (shouldPlay) {
+      audioPlayer.play()
+        .then(() => {
+          playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+          updateNowPlaying();
+          isSyncing = false;
+        })
+        .catch(e => {
+          console.log("Playback error:", e);
+          isSyncing = false;
+        });
+    } else {
+      isSyncing = false;
+    }
+  };
 }
 
-// Play track
+// Instant track switching
 function playTrack(track, index) {
+  if (isSyncing) return;
+  
   currentTrackIndex = index;
   socket.emit('play', track.url);
-  audioPlayer.src = track.url;
-  audioPlayer.currentTime = 0;
-  audioPlayer.play()
-    .then(() => {
-      updateNowPlaying();
-      playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
-      saveState();
-    });
+  loadTrack(track, 0, true);
+  saveState();
 }
 
-// Update UI
+// UI updates
 function updateNowPlaying() {
   if (currentTrackIndex >= 0) {
     const track = tracks[currentTrackIndex];
@@ -80,7 +81,7 @@ function updateNowPlaying() {
   }
 }
 
-// Save state
+// State persistence
 function saveState() {
   localStorage.setItem('jamsync-state', JSON.stringify({
     trackUrl: tracks[currentTrackIndex]?.url,
@@ -89,69 +90,75 @@ function saveState() {
   }));
 }
 
-// Socket events
+// Socket event handlers
+socket.on('full-sync', (state) => {
+  if (Date.now() - lastSyncTime < 500) return; // Prevent sync storms
+  lastSyncTime = Date.now();
+  
+  const trackIndex = tracks.findIndex(t => t.url === state.track);
+  if (trackIndex !== -1) {
+    currentTrackIndex = trackIndex;
+    loadTrack(tracks[currentTrackIndex], state.calculatedPosition, state.isPlaying);
+    updateNowPlaying();
+  }
+});
+
 socket.on('play', (state) => {
   const trackIndex = tracks.findIndex(t => t.url === state.track);
   if (trackIndex !== -1) {
     currentTrackIndex = trackIndex;
-    audioPlayer.src = state.track;
-    audioPlayer.currentTime = state.position;
-    audioPlayer.play()
-      .then(() => {
-        updateNowPlaying();
-        playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
-        saveState();
-      });
+    loadTrack(tracks[currentTrackIndex], state.calculatedPosition, true);
+    updateNowPlaying();
   }
 });
 
-socket.on('pause', (state) => {
-  audioPlayer.currentTime = state.position;
+socket.on('pause', ({ position }) => {
+  audioPlayer.currentTime = position;
   audioPlayer.pause();
   playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
-  saveState();
 });
 
-socket.on('seek', (position) => {
+socket.on('seek', ({ position }) => {
   audioPlayer.currentTime = position;
-  saveState();
 });
 
 // Player controls
 playPauseBtn.addEventListener('click', () => {
+  if (isSyncing) return;
+  
   if (audioPlayer.paused) {
     socket.emit('play', tracks[currentTrackIndex].url);
   } else {
-    socket.emit('pause', audioPlayer.currentTime);
+    socket.emit('pause');
   }
 });
 
 document.getElementById('prevBtn').addEventListener('click', () => {
-  if (tracks.length === 0) return;
+  if (tracks.length === 0 || isSyncing) return;
   currentTrackIndex = (currentTrackIndex - 1 + tracks.length) % tracks.length;
   playTrack(tracks[currentTrackIndex], currentTrackIndex);
 });
 
 document.getElementById('nextBtn').addEventListener('click', () => {
-  if (tracks.length === 0) return;
+  if (tracks.length === 0 || isSyncing) return;
   currentTrackIndex = (currentTrackIndex + 1) % tracks.length;
   playTrack(tracks[currentTrackIndex], currentTrackIndex);
 });
 
-// Progress bar
+// Progress sync
 audioPlayer.addEventListener('timeupdate', () => {
-  document.getElementById('songProgress').style.width = 
-    `${(audioPlayer.currentTime / audioPlayer.duration) * 100}%`;
-  document.getElementById('currentTime').textContent = 
-    formatTime(audioPlayer.currentTime);
+  const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
+  document.getElementById('songProgress').style.width = `${progress}%`;
+  document.getElementById('currentTime').textContent = formatTime(audioPlayer.currentTime);
+  if (!isSyncing) saveState();
 });
 
 audioPlayer.addEventListener('loadedmetadata', () => {
-  document.getElementById('totalTime').textContent = 
-    formatTime(audioPlayer.duration);
+  document.getElementById('totalTime').textContent = formatTime(audioPlayer.duration);
 });
 
 document.querySelector('.progress-bar').addEventListener('click', (e) => {
+  if (isSyncing) return;
   const seekTime = (e.offsetX / e.target.clientWidth) * audioPlayer.duration;
   socket.emit('seek', seekTime);
 });
@@ -168,5 +175,20 @@ searchInput.addEventListener('input', (e) => {
   renderTrackList(tracks.filter(t => t.name.toLowerCase().includes(term)));
 });
 
-// Auto-save every 2 seconds
-setInterval(saveState, 2000);
+function renderTrackList(trackList) {
+  musicList.innerHTML = '';
+  trackList.forEach((track, index) => {
+    const trackEl = document.createElement('div');
+    trackEl.className = `track ${index === currentTrackIndex ? 'active' : ''}`;
+    trackEl.innerHTML = `
+      <div class="track-number">${index + 1}</div>
+      <div class="track-info">
+        <div class="track-title">${track.name}</div>
+        <div class="track-artist">JamSync</div>
+      </div>
+      <div class="track-duration">${track.duration ? formatTime(track.duration) : '--:--'}</div>
+    `;
+    trackEl.addEventListener('click', () => playTrack(track, index));
+    musicList.appendChild(trackEl);
+  });
+}
