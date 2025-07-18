@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -14,22 +15,30 @@ const io = socketIo(server, {
 
 const PORT = process.env.PORT || 10000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const MUSIC_DIR = path.join(PUBLIC_DIR, 'music');
 
-// Your actual Google Drive tracks
-const driveTracks = [
-  {
-    name: "Track 1",
-    url: "https://drive.google.com/uc?export=download&id=1E66VxIpHX5kN2xX6pOENa7mkbuLDyFKX"
-  },
-  {
-    name: "Track 2",
-    url: "https://drive.google.com/uc?export=download&id=1aoN0gO-wgzCYqPRIHO766LqbCgscPhpa"
-  },
-  {
-    name: "Track 3",
-    url: "https://drive.google.com/uc?export=download&id=18vJfQyNK-mAWOs4ENQGI0OPdRivC6BnW"
+// Auto-load tracks from /public/music
+const getTracks = () => {
+  try {
+    return fs.readdirSync(MUSIC_DIR)
+      .filter(file => file.endsWith('.mp3'))
+      .map(file => ({
+        name: formatTrackName(file.replace('.mp3', '')),
+        url: `/music/${file}`
+      }));
+  } catch (err) {
+    console.error("Could not read music folder:", err);
+    return [];
   }
-];
+};
+
+// Format track names (e.g., "my-song" -> "My Song")
+const formatTrackName = (filename) => {
+  return filename
+    .split('-')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
 
 // Current playback state
 let currentState = {
@@ -44,7 +53,7 @@ app.use(express.static(PUBLIC_DIR));
 
 // Routes
 app.get('/tracks', (req, res) => {
-  res.json(driveTracks);
+  res.json(getTracks());
 });
 
 // Socket.io synchronization
@@ -60,7 +69,7 @@ io.on('connection', (socket) => {
       isPlaying: true,
       lastUpdated: Date.now()
     };
-    socket.broadcast.emit('play', currentState);
+    io.emit('play', currentState); // Changed to io.emit for reliability
   });
 
   socket.on('pause', (position) => {
@@ -70,23 +79,24 @@ io.on('connection', (socket) => {
       isPlaying: false,
       lastUpdated: Date.now()
     };
-    socket.broadcast.emit('pause', currentState);
+    io.emit('pause', currentState);
   });
 
   socket.on('seek', (position) => {
     currentState.position = position;
     currentState.lastUpdated = Date.now();
-    socket.broadcast.emit('seek', position);
+    io.emit('seek', position);
   });
 });
 
 // Start server
 server.listen(PORT, () => {
+  const tracks = getTracks();
   console.log(`
   JamSync Server Running
   ----------------------
   Port: ${PORT}
-  Tracks loaded: ${driveTracks.length}
+  Tracks loaded: ${tracks.length}
   Test endpoints:
   - Tracks: http://localhost:${PORT}/tracks
   - Player: http://localhost:${PORT}
