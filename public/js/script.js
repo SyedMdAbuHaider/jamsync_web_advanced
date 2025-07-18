@@ -1,194 +1,175 @@
 const socket = io();
 const audioPlayer = document.getElementById('audioPlayer');
 const musicList = document.getElementById('musicList');
-const currentTrackName = document.getElementById('currentTrackName');
-const currentArtist = document.getElementById('currentArtist');
 const playPauseBtn = document.getElementById('playPauseBtn');
-const searchInput = document.getElementById('searchInput');
-const nowPlayingMobile = document.getElementById('nowPlayingMobile');
 
+// State management
 let tracks = [];
-let currentTrackIndex = -1;
-let isSyncing = false;
+let currentTrack = null;
+let isUserAction = false;
 let lastSyncTime = 0;
+let syncTimer = null;
 
-// Initialize with saved state
-const savedState = JSON.parse(localStorage.getItem('jamsync-state')) || {};
-
-// Load tracks and restore state
-fetch('/tracks')
-  .then(res => res.json())
-  .then(loadedTracks => {
-    tracks = loadedTracks;
-    renderTrackList(tracks);
-    
-    if (savedState.trackUrl) {
-      currentTrackIndex = tracks.findIndex(t => t.url === savedState.trackUrl);
-      if (currentTrackIndex !== -1) {
-        loadTrack(tracks[currentTrackIndex], savedState.position || 0, savedState.isPlaying);
-      }
-    }
-  });
-
-// Precision track loading
-function loadTrack(track, position = 0, shouldPlay = false) {
-  isSyncing = true;
-  audioPlayer.src = track.url;
-  audioPlayer.currentTime = position;
+// Initialize
+socket.on('init', ({ tracks: serverTracks, currentState }) => {
+  tracks = serverTracks;
+  renderTrackList();
   
-  audioPlayer.onloadedmetadata = () => {
-    socket.emit('track-duration', { 
-      url: track.url, 
-      duration: audioPlayer.duration 
-    });
-    
-    if (shouldPlay) {
-      audioPlayer.play()
-        .then(() => {
-          playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
-          updateNowPlaying();
-          isSyncing = false;
-        })
-        .catch(e => {
-          console.log("Playback error:", e);
-          isSyncing = false;
-        });
-    } else {
-      isSyncing = false;
+  if (currentState.currentTrack) {
+    const track = tracks.find(t => t.id === currentState.currentTrack);
+    if (track) {
+      currentTrack = track;
+      audioPlayer.src = track.url;
+      audioPlayer.currentTime = currentState.position;
+      
+      if (currentState.isPlaying) {
+        audioPlayer.play().catch(e => console.log("Autoplay blocked:", e));
+      }
+      updateUI();
     }
-  };
-}
+  }
+});
 
 // Instant track switching
-function playTrack(track, index) {
-  if (isSyncing) return;
+function playTrack(track) {
+  isUserAction = true;
+  currentTrack = track;
+  audioPlayer.src = track.url;
+  audioPlayer.currentTime = 0;
   
-  currentTrackIndex = index;
-  socket.emit('play', track.url);
-  loadTrack(track, 0, true);
-  saveState();
-}
-
-// UI updates
-function updateNowPlaying() {
-  if (currentTrackIndex >= 0) {
-    const track = tracks[currentTrackIndex];
-    currentTrackName.textContent = track.name;
-    currentArtist.textContent = 'JamSync';
-    nowPlayingMobile.textContent = track.name;
-    document.querySelectorAll('.track').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.track')[currentTrackIndex]?.classList.add('active');
-  }
-}
-
-// State persistence
-function saveState() {
-  localStorage.setItem('jamsync-state', JSON.stringify({
-    trackUrl: tracks[currentTrackIndex]?.url,
-    position: audioPlayer.currentTime,
-    isPlaying: !audioPlayer.paused
-  }));
-}
-
-// Socket event handlers
-socket.on('full-sync', (state) => {
-  if (Date.now() - lastSyncTime < 500) return; // Prevent sync storms
-  lastSyncTime = Date.now();
+  socket.emit('play', {
+    trackId: track.id,
+    atPosition: 0
+  });
   
-  const trackIndex = tracks.findIndex(t => t.url === state.track);
-  if (trackIndex !== -1) {
-    currentTrackIndex = trackIndex;
-    loadTrack(tracks[currentTrackIndex], state.calculatedPosition, state.isPlaying);
-    updateNowPlaying();
+  audioPlayer.play()
+    .then(() => {
+      playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+      updateUI();
+    })
+    .catch(e => console.log("Play error:", e))
+    .finally(() => {
+      isUserAction = false;
+    });
+}
+
+// Precise sync handlers
+socket.on('play', ({ track, position, timestamp }) => {
+  if (isUserAction) return;
+  
+  clearTimeout(syncTimer);
+  const now = Date.now();
+  const latency = Math.max(0, now - timestamp);
+  const targetTime = position + (latency / 1000);
+  
+  // Smooth sync with prediction
+  if (currentTrack?.id !== track.id) {
+    currentTrack = track;
+    audioPlayer.src = track.url;
   }
+  
+  syncTimer = setTimeout(() => {
+    audioPlayer.currentTime = targetTime;
+    audioPlayer.play()
+      .then(() => {
+        playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+        updateUI();
+      });
+  }, 100); // Small delay for network stabilization
 });
 
-socket.on('play', (state) => {
-  const trackIndex = tracks.findIndex(t => t.url === state.track);
-  if (trackIndex !== -1) {
-    currentTrackIndex = trackIndex;
-    loadTrack(tracks[currentTrackIndex], state.calculatedPosition, true);
-    updateNowPlaying();
-  }
-});
-
-socket.on('pause', ({ position }) => {
-  audioPlayer.currentTime = position;
-  audioPlayer.pause();
-  playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+socket.on('pause', ({ position, timestamp }) => {
+  if (isUserAction) return;
+  
+  clearTimeout(syncTimer);
+  const now = Date.now();
+  const latency = now - timestamp;
+  const targetTime = position + (latency / 1000);
+  
+  syncTimer = setTimeout(() => {
+    audioPlayer.currentTime = targetTime;
+    audioPlayer.pause();
+    playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+  }, 100);
 });
 
 socket.on('seek', ({ position }) => {
-  audioPlayer.currentTime = position;
-});
-
-// Player controls
-playPauseBtn.addEventListener('click', () => {
-  if (isSyncing) return;
-  
-  if (audioPlayer.paused) {
-    socket.emit('play', tracks[currentTrackIndex].url);
-  } else {
-    socket.emit('pause');
+  if (!isUserAction) {
+    audioPlayer.currentTime = position;
   }
 });
 
-document.getElementById('prevBtn').addEventListener('click', () => {
-  if (tracks.length === 0 || isSyncing) return;
-  currentTrackIndex = (currentTrackIndex - 1 + tracks.length) % tracks.length;
-  playTrack(tracks[currentTrackIndex], currentTrackIndex);
+// Heartbeat for continuous sync
+socket.on('heartbeat', ({ position, isPlaying }) => {
+  if (isUserAction || Date.now() - lastSyncTime < 500) return;
+  
+  lastSyncTime = Date.now();
+  const currentPos = audioPlayer.currentTime;
+  
+  // Only adjust if significantly out of sync
+  if (Math.abs(currentPos - position) > 0.3) {
+    audioPlayer.currentTime = position;
+  }
+  
+  // Sync play/pause state
+  if (isPlaying && audioPlayer.paused) {
+    audioPlayer.play().catch(e => console.log("Sync play error:", e));
+  } else if (!isPlaying && !audioPlayer.paused) {
+    audioPlayer.pause();
+  }
 });
 
-document.getElementById('nextBtn').addEventListener('click', () => {
-  if (tracks.length === 0 || isSyncing) return;
-  currentTrackIndex = (currentTrackIndex + 1) % tracks.length;
-  playTrack(tracks[currentTrackIndex], currentTrackIndex);
+// UI controls
+playPauseBtn.addEventListener('click', () => {
+  isUserAction = true;
+  
+  if (audioPlayer.paused) {
+    socket.emit('play', {
+      trackId: currentTrack.id,
+      atPosition: audioPlayer.currentTime
+    });
+    audioPlayer.play()
+      .then(() => playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>')
+      .catch(e => console.log("Play error:", e));
+  } else {
+    socket.emit('pause', {
+      atPosition: audioPlayer.currentTime
+    });
+    audioPlayer.pause();
+    playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+  }
+  
+  setTimeout(() => isUserAction = false, 500);
 });
 
-// Progress sync
-audioPlayer.addEventListener('timeupdate', () => {
-  const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
-  document.getElementById('songProgress').style.width = `${progress}%`;
-  document.getElementById('currentTime').textContent = formatTime(audioPlayer.currentTime);
-  if (!isSyncing) saveState();
-});
-
-audioPlayer.addEventListener('loadedmetadata', () => {
-  document.getElementById('totalTime').textContent = formatTime(audioPlayer.duration);
-});
-
-document.querySelector('.progress-bar').addEventListener('click', (e) => {
-  if (isSyncing) return;
-  const seekTime = (e.offsetX / e.target.clientWidth) * audioPlayer.duration;
-  socket.emit('seek', seekTime);
-});
-
-function formatTime(seconds) {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-}
-
-// Search
-searchInput.addEventListener('input', (e) => {
-  const term = e.target.value.toLowerCase();
-  renderTrackList(tracks.filter(t => t.name.toLowerCase().includes(term)));
-});
-
-function renderTrackList(trackList) {
+// Track list rendering
+function renderTrackList() {
   musicList.innerHTML = '';
-  trackList.forEach((track, index) => {
+  tracks.forEach(track => {
     const trackEl = document.createElement('div');
-    trackEl.className = `track ${index === currentTrackIndex ? 'active' : ''}`;
+    trackEl.className = 'track';
     trackEl.innerHTML = `
-      <div class="track-number">${index + 1}</div>
       <div class="track-info">
         <div class="track-title">${track.name}</div>
-        <div class="track-artist">JamSync</div>
       </div>
-      <div class="track-duration">${track.duration ? formatTime(track.duration) : '--:--'}</div>
     `;
-    trackEl.addEventListener('click', () => playTrack(track, index));
+    trackEl.addEventListener('click', () => playTrack(track));
     musicList.appendChild(trackEl);
   });
 }
+
+function updateUI() {
+  // Update now playing info, progress bars, etc.
+  // (Keep your existing UI update code)
+}
+
+// Initialize
+audioPlayer.addEventListener('play', () => {
+  if (!isUserAction) return;
+  playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+});
+
+audioPlayer.addEventListener('pause', () => {
+  if (!isUserAction) return;
+  playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+});
