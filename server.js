@@ -11,37 +11,35 @@ const io = socketIo(server, {
     origin: "*",
     methods: ["GET", "POST"]
   },
-  pingTimeout: 60000,
-  pingInterval: 25000
+  pingTimeout: 30000,
+  pingInterval: 15000
 });
 
 const PORT = process.env.PORT || 10000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MUSIC_DIR = path.join(PUBLIC_DIR, 'music');
 
-// Enhanced state with timing control
-let state = {
+// Enhanced state management
+let roomState = {
   currentTrack: null,
   position: 0,
   isPlaying: false,
   lastUpdate: Date.now(),
-  playbackRate: 1.0
+  trackStartTime: Date.now(),
+  queue: []
 };
 
-// Track loading with caching
-let trackCache = null;
+// Track loading with metadata
 const getTracks = () => {
-  if (trackCache) return trackCache;
-  
   try {
-    trackCache = fs.readdirSync(MUSIC_DIR)
+    return fs.readdirSync(MUSIC_DIR)
       .filter(file => file.endsWith('.mp3'))
       .map(file => ({
         id: file,
         name: file.replace('.mp3', '').replace(/-/g, ' '),
-        url: `/music/${encodeURIComponent(file)}`
+        url: `/music/${encodeURIComponent(file)}`,
+        duration: 0 // Will be updated by clients
       }));
-    return trackCache;
   } catch (err) {
     console.error("Music loading error:", err);
     return [];
@@ -54,74 +52,103 @@ app.get('/tracks', (req, res) => {
   res.json(getTracks());
 });
 
-// Synchronization heartbeat
+// Calculate precise position
+function getCurrentPosition() {
+  if (!roomState.isPlaying) return roomState.position;
+  const elapsed = (Date.now() - roomState.trackStartTime) / 1000;
+  return Math.min(roomState.position + elapsed, roomState.currentTrack?.duration || Infinity);
+}
+
+// Sync all clients every second
 setInterval(() => {
-  io.emit('heartbeat', {
-    timestamp: Date.now(),
-    position: calculateCurrentPosition(),
-    isPlaying: state.isPlaying
+  io.emit('sync', {
+    position: getCurrentPosition(),
+    isPlaying: roomState.isPlaying,
+    currentTrack: roomState.currentTrack,
+    timestamp: Date.now()
   });
 }, 1000);
 
-function calculateCurrentPosition() {
-  if (!state.isPlaying) return state.position;
-  const elapsed = (Date.now() - state.lastUpdate) / 1000;
-  return Math.max(0, state.position + (elapsed * state.playbackRate));
-}
-
 io.on('connection', (socket) => {
-  // Send full state immediately
+  console.log('New client connected');
+  
+  // Send full state on connect
   socket.emit('init', {
     tracks: getTracks(),
     currentState: {
-      ...state,
-      position: calculateCurrentPosition()
+      ...roomState,
+      position: getCurrentPosition()
+    },
+    queue: roomState.queue
+  });
+
+  // Track duration reporting
+  socket.on('duration', ({ trackId, duration }) => {
+    const track = getTracks().find(t => t.id === trackId);
+    if (track) track.duration = duration;
+    if (roomState.currentTrack?.id === trackId) {
+      roomState.currentTrack.duration = duration;
     }
   });
 
-  // Playback control with timing synchronization
-  socket.on('play', ({ trackId, atPosition }) => {
+  // Playback control
+  socket.on('play', ({ trackId }) => {
     const track = getTracks().find(t => t.id === trackId);
     if (!track) return;
 
-    state = {
-      currentTrack: trackId,
-      position: atPosition || 0,
+    roomState = {
+      ...roomState,
+      currentTrack: track,
+      position: 0,
       isPlaying: true,
       lastUpdate: Date.now(),
-      playbackRate: 1.0
+      trackStartTime: Date.now()
     };
 
     io.emit('play', {
       track,
-      position: atPosition || 0,
       timestamp: Date.now()
     });
   });
 
-  socket.on('pause', ({ atPosition }) => {
-    state = {
-      ...state,
-      position: atPosition,
+  socket.on('pause', () => {
+    roomState = {
+      ...roomState,
+      position: getCurrentPosition(),
       isPlaying: false,
       lastUpdate: Date.now()
     };
     io.emit('pause', {
-      position: atPosition,
+      position: roomState.position,
       timestamp: Date.now()
     });
   });
 
-  socket.on('seek', ({ toPosition }) => {
-    state = {
-      ...state,
-      position: toPosition,
+  socket.on('seek', ({ position }) => {
+    roomState = {
+      ...roomState,
+      position: Math.max(0, position),
+      trackStartTime: Date.now(),
       lastUpdate: Date.now()
     };
     io.emit('seek', {
-      position: toPosition,
+      position: roomState.position,
       timestamp: Date.now()
     });
+  });
+
+  socket.on('next', () => {
+    if (roomState.queue.length > 0) {
+      const nextTrack = roomState.queue.shift();
+      socket.emit('play', {
+        track: nextTrack,
+        timestamp: Date.now()
+      });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected');
   });
 });
 
