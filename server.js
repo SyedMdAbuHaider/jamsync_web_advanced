@@ -10,34 +10,40 @@ const io = socketIo(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
-  }
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 const PORT = process.env.PORT || 10000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MUSIC_DIR = path.join(PUBLIC_DIR, 'music');
 
-// Enhanced state management
-let globalState = {
-  track: null,
+// Enhanced state with timing control
+let state = {
+  currentTrack: null,
   position: 0,
   isPlaying: false,
-  timestamp: Date.now(),
-  trackChangeTime: 0
+  lastUpdate: Date.now(),
+  playbackRate: 1.0
 };
 
-// Track loading with error handling
+// Track loading with caching
+let trackCache = null;
 const getTracks = () => {
+  if (trackCache) return trackCache;
+  
   try {
-    return fs.readdirSync(MUSIC_DIR)
+    trackCache = fs.readdirSync(MUSIC_DIR)
       .filter(file => file.endsWith('.mp3'))
       .map(file => ({
+        id: file,
         name: file.replace('.mp3', '').replace(/-/g, ' '),
-        url: `/music/${encodeURIComponent(file)}`,
-        duration: 0 // Will be set client-side
+        url: `/music/${encodeURIComponent(file)}`
       }));
+    return trackCache;
   } catch (err) {
-    console.error("Music folder error:", err);
+    console.error("Music loading error:", err);
     return [];
   }
 };
@@ -48,71 +54,76 @@ app.get('/tracks', (req, res) => {
   res.json(getTracks());
 });
 
-// Precision sync logic
+// Synchronization heartbeat
+setInterval(() => {
+  io.emit('heartbeat', {
+    timestamp: Date.now(),
+    position: calculateCurrentPosition(),
+    isPlaying: state.isPlaying
+  });
+}, 1000);
+
+function calculateCurrentPosition() {
+  if (!state.isPlaying) return state.position;
+  const elapsed = (Date.now() - state.lastUpdate) / 1000;
+  return Math.max(0, state.position + (elapsed * state.playbackRate));
+}
+
 io.on('connection', (socket) => {
   // Send full state immediately
-  socket.emit('full-sync', {
-    ...globalState,
-    calculatedPosition: calculateCurrentPosition(globalState)
+  socket.emit('init', {
+    tracks: getTracks(),
+    currentState: {
+      ...state,
+      position: calculateCurrentPosition()
+    }
   });
 
-  // Playback control
-  socket.on('play', (trackUrl) => {
-    globalState = {
-      track: trackUrl,
-      position: 0,
+  // Playback control with timing synchronization
+  socket.on('play', ({ trackId, atPosition }) => {
+    const track = getTracks().find(t => t.id === trackId);
+    if (!track) return;
+
+    state = {
+      currentTrack: trackId,
+      position: atPosition || 0,
       isPlaying: true,
-      timestamp: Date.now(),
-      trackChangeTime: Date.now()
+      lastUpdate: Date.now(),
+      playbackRate: 1.0
     };
+
     io.emit('play', {
-      ...globalState,
-      calculatedPosition: 0
+      track,
+      position: atPosition || 0,
+      timestamp: Date.now()
     });
   });
 
-  socket.on('pause', () => {
-    const currentPos = calculateCurrentPosition(globalState);
-    globalState = {
-      ...globalState,
-      position: currentPos,
+  socket.on('pause', ({ atPosition }) => {
+    state = {
+      ...state,
+      position: atPosition,
       isPlaying: false,
-      timestamp: Date.now()
+      lastUpdate: Date.now()
     };
     io.emit('pause', {
-      position: currentPos,
+      position: atPosition,
       timestamp: Date.now()
     });
   });
 
-  socket.on('seek', (position) => {
-    globalState = {
-      ...globalState,
-      position,
-      timestamp: Date.now()
+  socket.on('seek', ({ toPosition }) => {
+    state = {
+      ...state,
+      position: toPosition,
+      lastUpdate: Date.now()
     };
     io.emit('seek', {
-      position,
+      position: toPosition,
       timestamp: Date.now()
     });
   });
-
-  socket.on('track-duration', ({ url, duration }) => {
-    const track = getTracks().find(t => t.url === url);
-    if (track) track.duration = duration;
-  });
 });
-
-function calculateCurrentPosition(state) {
-  if (!state.isPlaying) return state.position;
-  const elapsed = (Date.now() - state.timestamp) / 1000;
-  return Math.min(state.position + elapsed, getTrackDuration(state.track));
-}
-
-function getTrackDuration(url) {
-  const track = getTracks().find(t => t.url === url);
-  return track?.duration || 0;
-}
 
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
