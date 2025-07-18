@@ -17,22 +17,24 @@ const PORT = process.env.PORT || 10000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MUSIC_DIR = path.join(PUBLIC_DIR, 'music');
 
-// Global playback state
-let currentState = {
+// Enhanced state management
+let globalState = {
   track: null,
   position: 0,
   isPlaying: false,
-  lastUpdated: Date.now()
+  timestamp: Date.now(),
+  trackChangeTime: 0
 };
 
-// Auto-load tracks
+// Track loading with error handling
 const getTracks = () => {
   try {
     return fs.readdirSync(MUSIC_DIR)
       .filter(file => file.endsWith('.mp3'))
       .map(file => ({
         name: file.replace('.mp3', '').replace(/-/g, ' '),
-        url: `/music/${encodeURIComponent(file)}`
+        url: `/music/${encodeURIComponent(file)}`,
+        duration: 0 // Will be set client-side
       }));
   } catch (err) {
     console.error("Music folder error:", err);
@@ -40,53 +42,78 @@ const getTracks = () => {
   }
 };
 
-// Middleware
 app.use(express.static(PUBLIC_DIR));
 
-// Routes
 app.get('/tracks', (req, res) => {
   res.json(getTracks());
 });
 
-// Socket.io
+// Precision sync logic
 io.on('connection', (socket) => {
-  // Send current state to new clients
-  socket.emit('sync', currentState);
+  // Send full state immediately
+  socket.emit('full-sync', {
+    ...globalState,
+    calculatedPosition: calculateCurrentPosition(globalState)
+  });
 
-  // Playback events
+  // Playback control
   socket.on('play', (trackUrl) => {
-    currentState = {
+    globalState = {
       track: trackUrl,
       position: 0,
       isPlaying: true,
-      lastUpdated: Date.now()
+      timestamp: Date.now(),
+      trackChangeTime: Date.now()
     };
-    io.emit('play', currentState);
+    io.emit('play', {
+      ...globalState,
+      calculatedPosition: 0
+    });
   });
 
-  socket.on('pause', (position) => {
-    currentState = {
-      ...currentState,
-      position,
+  socket.on('pause', () => {
+    const currentPos = calculateCurrentPosition(globalState);
+    globalState = {
+      ...globalState,
+      position: currentPos,
       isPlaying: false,
-      lastUpdated: Date.now()
+      timestamp: Date.now()
     };
-    io.emit('pause', currentState);
+    io.emit('pause', {
+      position: currentPos,
+      timestamp: Date.now()
+    });
   });
 
   socket.on('seek', (position) => {
-    currentState.position = position;
-    currentState.lastUpdated = Date.now();
-    io.emit('seek', position);
+    globalState = {
+      ...globalState,
+      position,
+      timestamp: Date.now()
+    };
+    io.emit('seek', {
+      position,
+      timestamp: Date.now()
+    });
+  });
+
+  socket.on('track-duration', ({ url, duration }) => {
+    const track = getTracks().find(t => t.url === url);
+    if (track) track.duration = duration;
   });
 });
 
+function calculateCurrentPosition(state) {
+  if (!state.isPlaying) return state.position;
+  const elapsed = (Date.now() - state.timestamp) / 1000;
+  return Math.min(state.position + elapsed, getTrackDuration(state.track));
+}
+
+function getTrackDuration(url) {
+  const track = getTracks().find(t => t.url === url);
+  return track?.duration || 0;
+}
+
 server.listen(PORT, () => {
-  console.log(`
-  JamSync Server Running
-  ----------------------
-  Port: ${PORT}
-  Tracks: ${getTracks().length} loaded
-  URL: http://localhost:${PORT}
-  `);
+  console.log(`Server running on http://localhost:${PORT}`);
 });
