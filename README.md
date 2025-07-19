@@ -1,19 +1,12 @@
 # 🎧 JamSync – Web Advanced
 
-> **Built with ❤️ by Haider, for Samiya – so we can vibe together, no matter the distance.**
-
 ---
 
 ## 🌟 About the Project
 
 **JamSync** is a **real-time collaborative music streaming web application**, handcrafted for a special purpose:  
-To let me and my girlfriend, **Samiya**, listen to music together — perfectly in sync — even when we're apart.
+ listen to music together — perfectly in sync — even when we're apart.
 
-This isn't just a web app.  
-It's our **digital music room** — a place where:
-- Every beat is a shared heartbeat,
-- Every pause is a smile,
-- And every song becomes **our memory**.
 
 ---
 
@@ -31,9 +24,6 @@ Upload your own `.mp3` files to the `public/music/` folder and build a personali
 ### 🎧 Simple & Elegant Interface  
 A clean, minimal layout ensures the focus stays on what truly matters — the music and the moment.
 
-### 🖤 Romantic Personalization *(in progress)*  
-Custom header with names (e.g., “JamSync – Haider ❤️ Samiya”), soft color themes, and thoughtful details designed to reflect your love story.
-
 ### 💬 Live Chat *(coming soon)*  
 Share words, lyrics, or love notes in real-time while listening — because sometimes, a song says it all, and sometimes you want to add a little more.
 
@@ -47,7 +37,7 @@ Meant for **just the two of us** — there are no signups, no distractions, just
 
 ## 🎁 Special Dedication
 
-This project is lovingly dedicated to **Samiya Binte Salam** –  
+This project is lovingly dedicated to **Samia Binte Salam** –  
 the one whose presence turns every ordinary song into something unforgettable.  
 
 From our first jam to every future playlist we’ll share,  
