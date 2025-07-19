@@ -6,24 +6,27 @@ const totalTimeEl = document.getElementById('totalTime');
 const playPauseBtn = document.getElementById('playPauseBtn');
 const nextBtn = document.getElementById('nextBtn');
 const prevBtn = document.getElementById('prevBtn');
+const searchInput = document.getElementById('searchInput');
+const musicList = document.getElementById('musicList');
 
 // State management
 let tracks = [];
+let filteredTracks = [];
 let currentTrack = null;
 let isUserInteracting = false;
-let wasPlayingBeforeAction = false;
 
 // Initialize
 socket.on('init', ({ tracks: serverTracks, currentState }) => {
   tracks = serverTracks;
-  renderTrackList();
+  filteredTracks = [...tracks]; // Initialize filtered tracks
+  renderTrackList(filteredTracks);
   
   if (currentState.currentTrack) {
     loadTrack(currentState.currentTrack, currentState.position, currentState.isPlaying);
   }
 });
 
-// Track loading with queue support
+// Track loading
 function loadTrack(track, position = 0, shouldPlay = false) {
   currentTrack = track;
   audioPlayer.src = track.url;
@@ -44,13 +47,46 @@ function loadTrack(track, position = 0, shouldPlay = false) {
     }
     updateUI();
   };
-  
-  audioPlayer.onerror = () => {
-    console.error("Error loading track:", track.url);
-  };
 }
 
-// Sync handlers
+// Search functionality
+searchInput.addEventListener('input', (e) => {
+  const searchTerm = e.target.value.toLowerCase().trim();
+  
+  if (searchTerm === '') {
+    filteredTracks = [...tracks];
+  } else {
+    filteredTracks = tracks.filter(track => 
+      track.name.toLowerCase().includes(searchTerm)
+    );
+  }
+  
+  renderTrackList(filteredTracks);
+});
+
+// Track list rendering
+function renderTrackList(trackList) {
+  musicList.innerHTML = '';
+  
+  trackList.forEach(track => {
+    const trackEl = document.createElement('div');
+    trackEl.className = `track ${currentTrack?.id === track.id ? 'active' : ''}`;
+    trackEl.dataset.id = track.id;
+    trackEl.innerHTML = `
+      <div class="track-info">
+        <div class="track-title">${track.name}</div>
+      </div>
+    `;
+    trackEl.addEventListener('click', () => {
+      isUserInteracting = true;
+      socket.emit('play', { trackId: track.id });
+      setTimeout(() => isUserInteracting = false, 500);
+    });
+    musicList.appendChild(trackEl);
+  });
+}
+
+// Sync handlers (keep all existing socket.on handlers)
 socket.on('track-changed', ({ track, position, isPlaying }) => {
   loadTrack(track, position, isPlaying);
 });
@@ -70,12 +106,10 @@ socket.on('seek', ({ position }) => {
 socket.on('sync', ({ position, isPlaying }) => {
   if (isUserInteracting) return;
   
-  // Only adjust if significantly out of sync (>500ms)
   if (Math.abs(audioPlayer.currentTime - position) > 0.5) {
     audioPlayer.currentTime = position;
   }
   
-  // Sync play/pause state
   if (isPlaying && audioPlayer.paused) {
     audioPlayer.play().catch(e => console.log("Sync play error:", e));
   } else if (!isPlaying && !audioPlayer.paused) {
@@ -83,71 +117,12 @@ socket.on('sync', ({ position, isPlaying }) => {
   }
 });
 
-// Player event handlers
-audioPlayer.addEventListener('timeupdate', () => {
-  const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100 || 0;
-  progressBar.style.width = `${progress}%`;
-  currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
-});
-
-audioPlayer.addEventListener('ended', () => {
-  socket.emit('track-ended');
-});
-
-// Progress bar interaction
-progressBar.parentElement.addEventListener('click', (e) => {
-  if (!currentTrack) return;
-  
-  const percent = e.offsetX / e.target.clientWidth;
-  const seekTime = percent * audioPlayer.duration;
-  
-  isUserInteracting = true;
-  wasPlayingBeforeAction = !audioPlayer.paused;
-  
-  if (wasPlayingBeforeAction) {
-    audioPlayer.pause();
-  }
-  
-  audioPlayer.currentTime = seekTime;
-  
-  socket.emit('seek', {
-    position: seekTime
-  });
-  
-  setTimeout(() => {
-    isUserInteracting = false;
-    if (wasPlayingBeforeAction) {
-      audioPlayer.play().catch(e => console.log("Play error:", e));
-    }
-  }, 500);
-});
-
-// Control functions
-function updatePlayState(isPlaying) {
-  playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
-}
-
-function updateUI() {
-  if (currentTrack) {
-    document.getElementById('currentTrackName').textContent = currentTrack.name;
-    document.getElementById('currentArtist').textContent = 'JamSync';
-    document.getElementById('nowPlayingMobile').textContent = currentTrack.name;
-    
-    // Highlight current track in list
-    document.querySelectorAll('.track').forEach(el => el.classList.remove('active'));
-    const currentTrackEl = document.querySelector(`.track[data-id="${currentTrack.id}"]`);
-    if (currentTrackEl) currentTrackEl.classList.add('active');
-  }
-}
-
-// Button handlers
+// Player controls (keep all existing button event listeners)
 playPauseBtn.addEventListener('click', () => {
   isUserInteracting = true;
   
   if (audioPlayer.paused) {
-    socket.emit('play', {
-      trackId: currentTrack.id
-    });
+    socket.emit('play', { trackId: currentTrack.id });
     audioPlayer.play()
       .then(() => updatePlayState(true))
       .catch(e => console.log("Play error:", e));
@@ -172,31 +147,63 @@ prevBtn.addEventListener('click', () => {
   setTimeout(() => isUserInteracting = false, 500);
 });
 
-// Track list rendering
-function renderTrackList() {
-  const musicList = document.getElementById('musicList');
-  musicList.innerHTML = '';
-  
-  tracks.forEach(track => {
-    const trackEl = document.createElement('div');
-    trackEl.className = 'track';
-    trackEl.dataset.id = track.id;
-    trackEl.innerHTML = `
-      <div class="track-info">
-        <div class="track-title">${track.name}</div>
-      </div>
-    `;
-    trackEl.addEventListener('click', () => {
-      socket.emit('play', {
-        trackId: track.id
-      });
-    });
-    musicList.appendChild(trackEl);
-  });
+// UI updates
+function updatePlayState(isPlaying) {
+  playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
 }
 
+function updateUI() {
+  if (currentTrack) {
+    document.getElementById('currentTrackName').textContent = currentTrack.name;
+    document.getElementById('currentArtist').textContent = 'JamSync';
+    document.getElementById('nowPlayingMobile').textContent = currentTrack.name;
+    
+    // Update active track in list
+    document.querySelectorAll('.track').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === currentTrack.id);
+    });
+  }
+}
+
+// Helper function
 function formatTime(seconds) {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
+
+// Player events (keep all existing audioPlayer event listeners)
+audioPlayer.addEventListener('timeupdate', () => {
+  const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100 || 0;
+  progressBar.style.width = `${progress}%`;
+  currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
+});
+
+audioPlayer.addEventListener('ended', () => {
+  socket.emit('track-ended');
+});
+
+progressBar.parentElement.addEventListener('click', (e) => {
+  if (!currentTrack) return;
+  
+  const percent = e.offsetX / e.target.clientWidth;
+  const seekTime = percent * audioPlayer.duration;
+  
+  isUserInteracting = true;
+  const wasPlaying = !audioPlayer.paused;
+  
+  if (wasPlaying) {
+    audioPlayer.pause();
+  }
+  
+  audioPlayer.currentTime = seekTime;
+  
+  socket.emit('seek', { position: seekTime });
+  
+  setTimeout(() => {
+    isUserInteracting = false;
+    if (wasPlaying) {
+      audioPlayer.play().catch(e => console.log("Play error:", e));
+    }
+  }, 500);
+});
