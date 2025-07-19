@@ -3,14 +3,15 @@ const audioPlayer = document.getElementById('audioPlayer');
 const progressBar = document.getElementById('songProgress');
 const currentTimeEl = document.getElementById('currentTime');
 const totalTimeEl = document.getElementById('totalTime');
+const playPauseBtn = document.getElementById('playPauseBtn');
+const nextBtn = document.getElementById('nextBtn');
+const prevBtn = document.getElementById('prevBtn');
 
 // State management
 let tracks = [];
 let currentTrack = null;
 let isUserInteracting = false;
-let lastServerUpdate = 0;
-let seekTimeout = null;
-let wasPlayingBeforeSeek = false;
+let wasPlayingBeforeAction = false;
 
 // Initialize
 socket.on('init', ({ tracks: serverTracks, currentState }) => {
@@ -22,7 +23,7 @@ socket.on('init', ({ tracks: serverTracks, currentState }) => {
   }
 });
 
-// Instant track loading
+// Track loading with queue support
 function loadTrack(track, position = 0, shouldPlay = false) {
   currentTrack = track;
   audioPlayer.src = track.url;
@@ -41,6 +42,7 @@ function loadTrack(track, position = 0, shouldPlay = false) {
         .then(() => updatePlayState(true))
         .catch(e => console.log("Play error:", e));
     }
+    updateUI();
   };
   
   audioPlayer.onerror = () => {
@@ -49,38 +51,34 @@ function loadTrack(track, position = 0, shouldPlay = false) {
 }
 
 // Sync handlers
-socket.on('play', ({ track, timestamp }) => {
-  if (isUserInteracting) return;
-  
-  loadTrack(track, 0, true);
-  updateUI();
+socket.on('track-changed', ({ track, position, isPlaying }) => {
+  loadTrack(track, position, isPlaying);
 });
 
-socket.on('pause', ({ position, timestamp }) => {
+socket.on('pause', ({ position }) => {
   if (isUserInteracting) return;
-  
   audioPlayer.currentTime = position;
   audioPlayer.pause();
   updatePlayState(false);
 });
 
-socket.on('seek', ({ position, timestamp }) => {
+socket.on('seek', ({ position }) => {
   if (isUserInteracting) return;
-  
-  clearTimeout(seekTimeout);
   audioPlayer.currentTime = position;
 });
 
-socket.on('sync', ({ position, isPlaying, currentTrack, timestamp }) => {
-  // Only sync if significantly out of sync (>500ms)
-  if (Math.abs(audioPlayer.currentTime - position) > 0.5 && !isUserInteracting) {
+socket.on('sync', ({ position, isPlaying }) => {
+  if (isUserInteracting) return;
+  
+  // Only adjust if significantly out of sync (>500ms)
+  if (Math.abs(audioPlayer.currentTime - position) > 0.5) {
     audioPlayer.currentTime = position;
   }
   
   // Sync play/pause state
-  if (isPlaying && audioPlayer.paused && !isUserInteracting) {
+  if (isPlaying && audioPlayer.paused) {
     audioPlayer.play().catch(e => console.log("Sync play error:", e));
-  } else if (!isPlaying && !audioPlayer.paused && !isUserInteracting) {
+  } else if (!isPlaying && !audioPlayer.paused) {
     audioPlayer.pause();
   }
 });
@@ -93,28 +91,32 @@ audioPlayer.addEventListener('timeupdate', () => {
 });
 
 audioPlayer.addEventListener('ended', () => {
-  socket.emit('next');
+  socket.emit('track-ended');
 });
 
+// Progress bar interaction
 progressBar.parentElement.addEventListener('click', (e) => {
   if (!currentTrack) return;
   
   const percent = e.offsetX / e.target.clientWidth;
   const seekTime = percent * audioPlayer.duration;
   
-  wasPlayingBeforeSeek = !audioPlayer.paused;
   isUserInteracting = true;
+  wasPlayingBeforeAction = !audioPlayer.paused;
   
-  clearTimeout(seekTimeout);
+  if (wasPlayingBeforeAction) {
+    audioPlayer.pause();
+  }
+  
   audioPlayer.currentTime = seekTime;
   
   socket.emit('seek', {
     position: seekTime
   });
   
-  seekTimeout = setTimeout(() => {
+  setTimeout(() => {
     isUserInteracting = false;
-    if (wasPlayingBeforeSeek) {
+    if (wasPlayingBeforeAction) {
       audioPlayer.play().catch(e => console.log("Play error:", e));
     }
   }, 500);
@@ -122,7 +124,6 @@ progressBar.parentElement.addEventListener('click', (e) => {
 
 // Control functions
 function updatePlayState(isPlaying) {
-  const playPauseBtn = document.getElementById('playPauseBtn');
   playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
 }
 
@@ -131,17 +132,16 @@ function updateUI() {
     document.getElementById('currentTrackName').textContent = currentTrack.name;
     document.getElementById('currentArtist').textContent = 'JamSync';
     document.getElementById('nowPlayingMobile').textContent = currentTrack.name;
+    
+    // Highlight current track in list
+    document.querySelectorAll('.track').forEach(el => el.classList.remove('active'));
+    const currentTrackEl = document.querySelector(`.track[data-id="${currentTrack.id}"]`);
+    if (currentTrackEl) currentTrackEl.classList.add('active');
   }
 }
 
-function formatTime(seconds) {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-}
-
-// UI event handlers
-document.getElementById('playPauseBtn').addEventListener('click', () => {
+// Button handlers
+playPauseBtn.addEventListener('click', () => {
   isUserInteracting = true;
   
   if (audioPlayer.paused) {
@@ -160,6 +160,18 @@ document.getElementById('playPauseBtn').addEventListener('click', () => {
   setTimeout(() => isUserInteracting = false, 500);
 });
 
+nextBtn.addEventListener('click', () => {
+  isUserInteracting = true;
+  socket.emit('next');
+  setTimeout(() => isUserInteracting = false, 500);
+});
+
+prevBtn.addEventListener('click', () => {
+  isUserInteracting = true;
+  socket.emit('previous');
+  setTimeout(() => isUserInteracting = false, 500);
+});
+
 // Track list rendering
 function renderTrackList() {
   const musicList = document.getElementById('musicList');
@@ -168,6 +180,7 @@ function renderTrackList() {
   tracks.forEach(track => {
     const trackEl = document.createElement('div');
     trackEl.className = 'track';
+    trackEl.dataset.id = track.id;
     trackEl.innerHTML = `
       <div class="track-info">
         <div class="track-title">${track.name}</div>
@@ -180,4 +193,10 @@ function renderTrackList() {
     });
     musicList.appendChild(trackEl);
   });
+}
+
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
