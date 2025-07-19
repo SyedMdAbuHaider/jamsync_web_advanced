@@ -1,3 +1,22 @@
+# 🎧 JamSync – Web Advanced
+
+> **Built with ❤️ by Haider, for Samiya – so we can vibe together, no matter the distance.**
+
+---
+
+## 🌟 About the Project
+
+**JamSync** is a **real-time collaborative music streaming web application**, handcrafted for a special purpose:  
+To let me and my girlfriend, **Samiya**, listen to music together — perfectly in sync — even when we're apart.
+
+This isn't just a web app.  
+It's our **digital music room** — a place where:
+- Every beat is a shared heartbeat,
+- Every pause is a smile,
+- And every song becomes **our memory**.
+
+---
+
 ## 💡 Features
 
 JamSync isn't just another web music player — it's a **shared experience** designed for two hearts, one vibe.  
@@ -40,3 +59,23 @@ crafted to keep us close even when miles apart.
 With every beat, we write our story.  
 With every pause, we feel each other’s silence.  
 This isn’t just an app — it’s a piece of us.
+
+---
+
+## 📸 Preview
+
+| Desktop View | Mobile View |
+|--------------|-------------|
+| ![JamSync PC View](./ss1.png) | ![JamSync Mobile View](./ss2.png) |
+
+> *Designed to keep our hearts in sync — whether on a big screen or in the palm of our hands.* 💑🎶
+
+---
+
+## 🛠️ Tech Stack
+
+- **Frontend**: HTML, CSS, JavaScript  
+- **Backend**: Node.js, Express.js  
+- **Realtime Communication**: Socket.io  
+
+
