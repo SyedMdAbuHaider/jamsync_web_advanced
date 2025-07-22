@@ -65,23 +65,10 @@ header h1 {
     padding: 15px;
 }
 
-/* Playlist Section */
-.playlist-section {
-    margin-bottom: 15px;
-}
-
 .playlist-control {
     display: flex;
     gap: 10px;
-}
-
-#playlistStatus {
-    height: 20px;
-    margin-top: 5px;
-    font-size: 0.8rem;
-    color: var(--highlight);
-    text-align: center;
-    transition: all 0.3s;
+    padding: 0 15px 15px;
 }
 
 .playlist-dropdown {
@@ -89,9 +76,8 @@ header h1 {
     background: rgba(255,255,255,0.1);
     border: none;
     color: white;
-    padding: 8px 12px;
+    padding: 8px;
     border-radius: 4px;
-    font-size: 0.9rem;
 }
 
 .btn-small {
@@ -100,26 +86,15 @@ header h1 {
     color: white;
     padding: 8px 12px;
     border-radius: 4px;
-    font-size: 0.9rem;
+    font-size: 0.8rem;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s;
 }
 
 .btn-small:hover {
     background: var(--highlight-hover);
 }
 
-/* Visualizer */
-#visualizer {
-    width: 100%;
-    height: 80px;
-    background: rgba(0,0,0,0.2);
-    border-radius: 8px;
-    margin-bottom: 20px;
-    display: block;
-}
-
-/* Search Bar */
 .search-bar {
     position: relative;
     margin-bottom: 20px;
@@ -148,7 +123,7 @@ header h1 {
     background-color: rgba(255, 255, 255, 0.2);
 }
 
-/* Tracks List */
+/* Tracks List Styles */
 .tracks-list {
     display: flex;
     flex-direction: column;
@@ -199,7 +174,7 @@ header h1 {
     margin-left: auto;
 }
 
-/* Player Bar */
+/* Player Bar Styles */
 .player-bar {
     position: fixed;
     bottom: 0;
@@ -306,7 +281,7 @@ header h1 {
     100% { opacity: 0.6; }
 }
 
-/* Responsive */
+/* Responsive Adjustments */
 @media (min-width: 768px) {
     .app-container {
         display: grid;
@@ -367,9 +342,5 @@ header h1 {
 
     .player-controls {
         gap: 20px;
-    }
-
-    #visualizer {
-        height: 60px;
     }
 }
