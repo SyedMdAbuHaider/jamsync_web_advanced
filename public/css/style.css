@@ -1,8 +1,8 @@
 :root {
     --background-primary: #121212;
     --background-secondary: #181818;
-    --highlight: #1db954;
-    --highlight-hover: #1ed760;
+    --highlight: #ff6b9d; /* Changed from green to pink */
+    --highlight-hover: #ff8aae; /* Lighter pink for hover */
     --text-primary: #ffffff;
     --text-secondary: #b3b3b3;
     --player-height: 90px;
@@ -42,7 +42,7 @@ header {
 header h1 {
     font-size: 1.5rem;
     font-weight: 600;
-    color: var(--highlight);
+    color: var(--highlight); /* Now pink */
 }
 
 .now-playing-mobile {
@@ -81,7 +81,7 @@ header h1 {
 }
 
 .btn-small {
-    background: var(--highlight);
+    background: var(--highlight); /* Now pink */
     border: none;
     color: white;
     padding: 8px 12px;
@@ -92,7 +92,7 @@ header h1 {
 }
 
 .btn-small:hover {
-    background: var(--highlight-hover);
+    background: var(--highlight-hover); /* Lighter pink */
 }
 
 .search-bar {
@@ -144,7 +144,7 @@ header h1 {
 }
 
 .track.active {
-    background-color: rgba(29, 185, 84, 0.2);
+    background-color: rgba(255, 107, 157, 0.2); /* Pink with transparency */
     animation: pulse 2s infinite;
 }
 
@@ -263,7 +263,7 @@ header h1 {
 .progress {
     height: 100%;
     width: 0;
-    background: var(--highlight);
+    background: var(--highlight); /* Now pink */
     border-radius: 2px;
 }
 
