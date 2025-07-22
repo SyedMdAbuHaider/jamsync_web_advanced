@@ -16,6 +16,32 @@ const io = socketIo(server, {
 const PORT = process.env.PORT || 10000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MUSIC_DIR = path.join(PUBLIC_DIR, 'music');
+const PLAYLIST_FILE = path.join(__dirname, 'playlists.json');
+
+// Initialize playlists file if it doesn't exist
+if (!fs.existsSync(PLAYLIST_FILE)) {
+  fs.writeFileSync(PLAYLIST_FILE, JSON.stringify({
+    'default': [],
+    'favorites': []
+  }));
+}
+
+// Load playlists
+const loadPlaylists = () => {
+  try {
+    return JSON.parse(fs.readFileSync(PLAYLIST_FILE));
+  } catch (err) {
+    console.error("Error loading playlists:", err);
+    return { 'default': [], 'favorites': [] };
+  }
+};
+
+// Save playlists
+const savePlaylists = (playlists) => {
+  fs.writeFileSync(PLAYLIST_FILE, JSON.stringify(playlists, null, 2));
+};
+
+let playlists = loadPlaylists();
 
 // Enhanced state with queue management
 let roomState = {
@@ -52,6 +78,10 @@ app.use(express.static(PUBLIC_DIR));
 
 app.get('/tracks', (req, res) => {
   res.json(tracks);
+});
+
+app.get('/playlists', (req, res) => {
+  res.json(playlists);
 });
 
 // Play next track in queue
@@ -94,6 +124,7 @@ io.on('connection', (socket) => {
   // Send full state on connect
   socket.emit('init', {
     tracks,
+    playlists,
     currentState: {
       ...roomState,
       position: getCurrentPosition()
@@ -180,6 +211,22 @@ io.on('connection', (socket) => {
   // Track ended
   socket.on('track-ended', () => {
     playNextTrack();
+  });
+
+  // Playlist management
+  socket.on('add-to-playlist', ({ playlistName, trackId }) => {
+    const track = tracks.find(t => t.id === trackId);
+    if (!track) return;
+    
+    if (!playlists[playlistName]) {
+      playlists[playlistName] = [];
+    }
+    
+    if (!playlists[playlistName].some(t => t.id === trackId)) {
+      playlists[playlistName].push(track);
+      savePlaylists(playlists);
+      io.emit('playlist-updated', { playlistName, playlists });
+    }
   });
 });
 
