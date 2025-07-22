@@ -65,6 +65,36 @@ header h1 {
     padding: 15px;
 }
 
+.playlist-control {
+    display: flex;
+    gap: 10px;
+    padding: 0 15px 15px;
+}
+
+.playlist-dropdown {
+    flex: 1;
+    background: rgba(255,255,255,0.1);
+    border: none;
+    color: white;
+    padding: 8px;
+    border-radius: 4px;
+}
+
+.btn-small {
+    background: var(--highlight);
+    border: none;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-small:hover {
+    background: var(--highlight-hover);
+}
+
 .search-bar {
     position: relative;
     margin-bottom: 20px;
@@ -115,12 +145,7 @@ header h1 {
 
 .track.active {
     background-color: rgba(29, 185, 84, 0.2);
-}
-
-.track-number {
-    width: 25px;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
+    animation: pulse 2s infinite;
 }
 
 .track-info {
@@ -137,15 +162,16 @@ header h1 {
     text-overflow: ellipsis;
 }
 
-.track-artist {
+.track-meta {
+    display: flex;
+    gap: 15px;
+    margin-top: 5px;
     font-size: 0.8rem;
     color: var(--text-secondary);
-    margin-top: 3px;
 }
 
-.track-duration {
-    color: var(--text-secondary);
-    font-size: 0.8rem;
+.track-likes {
+    margin-left: auto;
 }
 
 /* Player Bar Styles */
@@ -214,6 +240,7 @@ header h1 {
     align-items: center;
     justify-content: center;
     color: #000;
+    transition: transform 0.2s;
 }
 
 .btn-play-pause:hover {
@@ -245,6 +272,13 @@ header h1 {
     justify-content: space-between;
     font-size: 0.7rem;
     color: var(--text-secondary);
+}
+
+/* Animations */
+@keyframes pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 1; }
+    100% { opacity: 0.6; }
 }
 
 /* Responsive Adjustments */
