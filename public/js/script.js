@@ -8,6 +8,7 @@ const nextBtn = document.getElementById('nextBtn');
 const prevBtn = document.getElementById('prevBtn');
 const searchInput = document.getElementById('searchInput');
 const musicList = document.getElementById('musicList');
+const addToPlaylistBtn = document.getElementById('addToPlaylist');
 
 // State management
 let tracks = [];
@@ -18,7 +19,7 @@ let isUserInteracting = false;
 // Initialize
 socket.on('init', ({ tracks: serverTracks, currentState }) => {
   tracks = serverTracks;
-  filteredTracks = [...tracks]; // Initialize filtered tracks
+  filteredTracks = [...tracks];
   renderTrackList(filteredTracks);
   
   if (currentState.currentTrack) {
@@ -75,6 +76,10 @@ function renderTrackList(trackList) {
     trackEl.innerHTML = `
       <div class="track-info">
         <div class="track-title">${track.name}</div>
+        <div class="track-meta">
+          <span class="track-duration">${track.duration ? formatTime(track.duration) : '--:--'}</span>
+          <span class="track-likes"><i class="far fa-heart"></i> 0</span>
+        </div>
       </div>
     `;
     trackEl.addEventListener('click', () => {
@@ -86,7 +91,14 @@ function renderTrackList(trackList) {
   });
 }
 
-// Sync handlers (keep all existing socket.on handlers)
+// Playlist UI handlers
+addToPlaylistBtn.addEventListener('click', () => {
+  if (!currentTrack) return;
+  const playlistSelect = document.getElementById('playlistSelect');
+  alert(`"${currentTrack.name}" would be added to ${playlistSelect.value} playlist in future update!`);
+});
+
+// Sync handlers
 socket.on('track-changed', ({ track, position, isPlaying }) => {
   loadTrack(track, position, isPlaying);
 });
@@ -117,7 +129,7 @@ socket.on('sync', ({ position, isPlaying }) => {
   }
 });
 
-// Player controls (keep all existing button event listeners)
+// Player controls
 playPauseBtn.addEventListener('click', () => {
   isUserInteracting = true;
   
@@ -158,7 +170,6 @@ function updateUI() {
     document.getElementById('currentArtist').textContent = 'JamSync';
     document.getElementById('nowPlayingMobile').textContent = currentTrack.name;
     
-    // Update active track in list
     document.querySelectorAll('.track').forEach(el => {
       el.classList.toggle('active', el.dataset.id === currentTrack.id);
     });
@@ -172,7 +183,7 @@ function formatTime(seconds) {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-// Player events (keep all existing audioPlayer event listeners)
+// Player events
 audioPlayer.addEventListener('timeupdate', () => {
   const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100 || 0;
   progressBar.style.width = `${progress}%`;
