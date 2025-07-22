@@ -20,6 +20,16 @@
             </header>
 
             <div class="content">
+                <div class="playlist-control">
+                    <select id="playlistSelect" class="playlist-dropdown">
+                        <option value="default">Default Playlist</option>
+                        <option value="favorites">Favorites</option>
+                    </select>
+                    <button id="addToPlaylist" class="btn-small">
+                        <i class="fas fa-plus"></i> Add Current
+                    </button>
+                </div>
+
                 <div class="search-bar">
                     <i class="fas fa-search"></i>
                     <input type="text" placeholder="Search tracks..." id="searchInput">
