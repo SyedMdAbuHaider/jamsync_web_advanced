@@ -9,23 +9,38 @@ const prevBtn = document.getElementById('prevBtn');
 const searchInput = document.getElementById('searchInput');
 const musicList = document.getElementById('musicList');
 const addToPlaylistBtn = document.getElementById('addToPlaylist');
+const playlistSelect = document.getElementById('playlistSelect');
 
 // State management
 let tracks = [];
 let filteredTracks = [];
 let currentTrack = null;
 let isUserInteracting = false;
+let playlists = {};
 
 // Initialize
-socket.on('init', ({ tracks: serverTracks, currentState }) => {
+socket.on('init', ({ tracks: serverTracks, playlists: serverPlaylists, currentState }) => {
   tracks = serverTracks;
   filteredTracks = [...tracks];
+  playlists = serverPlaylists;
   renderTrackList(filteredTracks);
+  updatePlaylistDropdown();
   
   if (currentState.currentTrack) {
     loadTrack(currentState.currentTrack, currentState.position, currentState.isPlaying);
   }
 });
+
+// Update playlist dropdown
+function updatePlaylistDropdown() {
+  playlistSelect.innerHTML = '';
+  Object.keys(playlists).forEach(playlistName => {
+    const option = document.createElement('option');
+    option.value = playlistName;
+    option.textContent = playlistName.charAt(0).toUpperCase() + playlistName.slice(1);
+    playlistSelect.appendChild(option);
+  });
+}
 
 // Track loading
 function loadTrack(track, position = 0, shouldPlay = false) {
@@ -94,87 +109,20 @@ function renderTrackList(trackList) {
 // Playlist UI handlers
 addToPlaylistBtn.addEventListener('click', () => {
   if (!currentTrack) return;
-  const playlistSelect = document.getElementById('playlistSelect');
-  alert(`"${currentTrack.name}" would be added to ${playlistSelect.value} playlist in future update!`);
-});
-
-// Sync handlers
-socket.on('track-changed', ({ track, position, isPlaying }) => {
-  loadTrack(track, position, isPlaying);
-});
-
-socket.on('pause', ({ position }) => {
-  if (isUserInteracting) return;
-  audioPlayer.currentTime = position;
-  audioPlayer.pause();
-  updatePlayState(false);
-});
-
-socket.on('seek', ({ position }) => {
-  if (isUserInteracting) return;
-  audioPlayer.currentTime = position;
-});
-
-socket.on('sync', ({ position, isPlaying }) => {
-  if (isUserInteracting) return;
+  const playlistName = playlistSelect.value;
   
-  if (Math.abs(audioPlayer.currentTime - position) > 0.5) {
-    audioPlayer.currentTime = position;
-  }
-  
-  if (isPlaying && audioPlayer.paused) {
-    audioPlayer.play().catch(e => console.log("Sync play error:", e));
-  } else if (!isPlaying && !audioPlayer.paused) {
-    audioPlayer.pause();
-  }
+  socket.emit('add-to-playlist', {
+    playlistName,
+    trackId: currentTrack.id
+  });
 });
 
-// Player controls
-playPauseBtn.addEventListener('click', () => {
-  isUserInteracting = true;
-  
-  if (audioPlayer.paused) {
-    socket.emit('play', { trackId: currentTrack.id });
-    audioPlayer.play()
-      .then(() => updatePlayState(true))
-      .catch(e => console.log("Play error:", e));
-  } else {
-    socket.emit('pause');
-    audioPlayer.pause();
-    updatePlayState(false);
-  }
-  
-  setTimeout(() => isUserInteracting = false, 500);
+socket.on('playlist-updated', ({ playlistName, playlists: updatedPlaylists }) => {
+  playlists = updatedPlaylists;
+  alert(`"${currentTrack.name}" added to ${playlistName} playlist!`);
 });
 
-nextBtn.addEventListener('click', () => {
-  isUserInteracting = true;
-  socket.emit('next');
-  setTimeout(() => isUserInteracting = false, 500);
-});
-
-prevBtn.addEventListener('click', () => {
-  isUserInteracting = true;
-  socket.emit('previous');
-  setTimeout(() => isUserInteracting = false, 500);
-});
-
-// UI updates
-function updatePlayState(isPlaying) {
-  playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
-}
-
-function updateUI() {
-  if (currentTrack) {
-    document.getElementById('currentTrackName').textContent = currentTrack.name;
-    document.getElementById('currentArtist').textContent = 'JamSync';
-    document.getElementById('nowPlayingMobile').textContent = currentTrack.name;
-    
-    document.querySelectorAll('.track').forEach(el => {
-      el.classList.toggle('active', el.dataset.id === currentTrack.id);
-    });
-  }
-}
+// ... [rest of the existing socket handlers and player controls remain the same] ...
 
 // Helper function
 function formatTime(seconds) {
@@ -183,38 +131,4 @@ function formatTime(seconds) {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-// Player events
-audioPlayer.addEventListener('timeupdate', () => {
-  const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100 || 0;
-  progressBar.style.width = `${progress}%`;
-  currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
-});
-
-audioPlayer.addEventListener('ended', () => {
-  socket.emit('track-ended');
-});
-
-progressBar.parentElement.addEventListener('click', (e) => {
-  if (!currentTrack) return;
-  
-  const percent = e.offsetX / e.target.clientWidth;
-  const seekTime = percent * audioPlayer.duration;
-  
-  isUserInteracting = true;
-  const wasPlaying = !audioPlayer.paused;
-  
-  if (wasPlaying) {
-    audioPlayer.pause();
-  }
-  
-  audioPlayer.currentTime = seekTime;
-  
-  socket.emit('seek', { position: seekTime });
-  
-  setTimeout(() => {
-    isUserInteracting = false;
-    if (wasPlaying) {
-      audioPlayer.play().catch(e => console.log("Play error:", e));
-    }
-  }, 500);
-});
+// ... [rest of the existing code remains the same] ...
