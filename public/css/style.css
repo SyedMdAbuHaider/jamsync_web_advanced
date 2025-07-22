@@ -1,8 +1,8 @@
 :root {
     --background-primary: #121212;
     --background-secondary: #181818;
-    --highlight: #ff6b9d; /* Changed from green to pink */
-    --highlight-hover: #ff8aae; /* Lighter pink for hover */
+    --highlight: #ff6b9d;
+    --highlight-hover: #ff8aae;
     --text-primary: #ffffff;
     --text-secondary: #b3b3b3;
     --player-height: 90px;
@@ -42,7 +42,7 @@ header {
 header h1 {
     font-size: 1.5rem;
     font-weight: 600;
-    color: var(--highlight); /* Now pink */
+    color: var(--highlight);
 }
 
 .now-playing-mobile {
@@ -81,7 +81,7 @@ header h1 {
 }
 
 .btn-small {
-    background: var(--highlight); /* Now pink */
+    background: var(--highlight);
     border: none;
     color: white;
     padding: 8px 12px;
@@ -92,7 +92,7 @@ header h1 {
 }
 
 .btn-small:hover {
-    background: var(--highlight-hover); /* Lighter pink */
+    background: var(--highlight-hover);
 }
 
 .search-bar {
@@ -136,7 +136,8 @@ header h1 {
     padding: 12px 15px;
     border-radius: 8px;
     background-color: rgba(255, 255, 255, 0.03);
-    transition: background-color 0.2s;
+    transition: all 0.3s ease;
+    cursor: pointer;
 }
 
 .track:hover {
@@ -144,8 +145,17 @@ header h1 {
 }
 
 .track.active {
-    background-color: rgba(255, 107, 157, 0.2); /* Pink with transparency */
+    background-color: rgba(255, 107, 157, 0.15);
+    border-left: 3px solid var(--highlight);
+}
+
+.track.playing {
+    background-color: rgba(255, 107, 157, 0.25);
     animation: pulse 2s infinite;
+}
+
+.track.active.playing {
+    background-color: rgba(255, 107, 157, 0.3);
 }
 
 .track-info {
@@ -263,8 +273,9 @@ header h1 {
 .progress {
     height: 100%;
     width: 0;
-    background: var(--highlight); /* Now pink */
+    background: var(--highlight);
     border-radius: 2px;
+    transition: width 0.1s linear;
 }
 
 .time-display {
@@ -276,9 +287,9 @@ header h1 {
 
 /* Animations */
 @keyframes pulse {
-    0% { opacity: 0.6; }
-    50% { opacity: 1; }
-    100% { opacity: 0.6; }
+    0% { background-color: rgba(255, 107, 157, 0.25); }
+    50% { background-color: rgba(255, 107, 157, 0.35); }
+    100% { background-color: rgba(255, 107, 157, 0.25); }
 }
 
 /* Responsive Adjustments */
