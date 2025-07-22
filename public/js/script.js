@@ -42,10 +42,14 @@ function updatePlaylistDropdown() {
   });
 }
 
-// Track loading
+// Track loading (updated for immediate response)
 function loadTrack(track, position = 0, shouldPlay = false) {
   currentTrack = track;
   audioPlayer.src = track.url;
+  
+  // Immediate UI update
+  updateUI();
+  renderTrackList(filteredTracks);
   
   audioPlayer.onloadedmetadata = () => {
     socket.emit('duration', {
@@ -58,10 +62,12 @@ function loadTrack(track, position = 0, shouldPlay = false) {
     
     if (shouldPlay) {
       audioPlayer.play()
-        .then(() => updatePlayState(true))
+        .then(() => {
+          updatePlayState(true);
+          document.querySelector(`.track[data-id="${track.id}"]`)?.classList.add('playing');
+        })
         .catch(e => console.log("Play error:", e));
     }
-    updateUI();
   };
 }
 
@@ -80,13 +86,19 @@ searchInput.addEventListener('input', (e) => {
   renderTrackList(filteredTracks);
 });
 
-// Track list rendering
+// Track list rendering (updated for better highlighting)
 function renderTrackList(trackList) {
   musicList.innerHTML = '';
   
   trackList.forEach(track => {
     const trackEl = document.createElement('div');
-    trackEl.className = `track ${currentTrack?.id === track.id ? 'active' : ''}`;
+    trackEl.className = 'track';
+    if (currentTrack?.id === track.id) {
+      trackEl.classList.add('active');
+      if (!audioPlayer.paused) {
+        trackEl.classList.add('playing');
+      }
+    }
     trackEl.dataset.id = track.id;
     trackEl.innerHTML = `
       <div class="track-info">
@@ -97,14 +109,29 @@ function renderTrackList(trackList) {
         </div>
       </div>
     `;
-    trackEl.addEventListener('click', () => {
-      isUserInteracting = true;
-      socket.emit('play', { trackId: track.id });
-      setTimeout(() => isUserInteracting = false, 500);
-    });
     musicList.appendChild(trackEl);
   });
 }
+
+// Track click handler (updated for immediate response)
+musicList.addEventListener('click', (e) => {
+  const trackEl = e.target.closest('.track');
+  if (!trackEl) return;
+  
+  const trackId = trackEl.dataset.id;
+  const track = tracks.find(t => t.id === trackId);
+  if (!track) return;
+  
+  isUserInteracting = true;
+  
+  // Immediate UI update
+  currentTrack = track;
+  updateUI();
+  renderTrackList(filteredTracks);
+  
+  socket.emit('play', { trackId: track.id });
+  setTimeout(() => isUserInteracting = false, 500);
+});
 
 // Playlist UI handlers
 addToPlaylistBtn.addEventListener('click', () => {
@@ -122,7 +149,96 @@ socket.on('playlist-updated', ({ playlistName, playlists: updatedPlaylists }) =>
   alert(`"${currentTrack.name}" added to ${playlistName} playlist!`);
 });
 
-// ... [rest of the existing socket handlers and player controls remain the same] ...
+// Sync handlers
+socket.on('track-changed', ({ track, position, isPlaying }) => {
+  loadTrack(track, position, isPlaying);
+});
+
+socket.on('pause', ({ position }) => {
+  if (isUserInteracting) return;
+  audioPlayer.currentTime = position;
+  audioPlayer.pause();
+  updatePlayState(false);
+  document.querySelector('.track.playing')?.classList.remove('playing');
+});
+
+socket.on('seek', ({ position }) => {
+  if (isUserInteracting) return;
+  audioPlayer.currentTime = position;
+});
+
+socket.on('sync', ({ position, isPlaying }) => {
+  if (isUserInteracting) return;
+  
+  if (Math.abs(audioPlayer.currentTime - position) > 0.5) {
+    audioPlayer.currentTime = position;
+  }
+  
+  if (isPlaying && audioPlayer.paused) {
+    audioPlayer.play()
+      .then(() => {
+        updatePlayState(true);
+        if (currentTrack) {
+          document.querySelector(`.track[data-id="${currentTrack.id}"]`)?.classList.add('playing');
+        }
+      })
+      .catch(e => console.log("Sync play error:", e));
+  } else if (!isPlaying && !audioPlayer.paused) {
+    audioPlayer.pause();
+    updatePlayState(false);
+    document.querySelector('.track.playing')?.classList.remove('playing');
+  }
+});
+
+// Player controls
+playPauseBtn.addEventListener('click', () => {
+  isUserInteracting = true;
+  
+  if (audioPlayer.paused) {
+    socket.emit('play', { trackId: currentTrack.id });
+    audioPlayer.play()
+      .then(() => {
+        updatePlayState(true);
+        if (currentTrack) {
+          document.querySelector(`.track[data-id="${currentTrack.id}"]`)?.classList.add('playing');
+        }
+      })
+      .catch(e => console.log("Play error:", e));
+  } else {
+    socket.emit('pause');
+    audioPlayer.pause();
+    updatePlayState(false);
+    document.querySelector('.track.playing')?.classList.remove('playing');
+  }
+  
+  setTimeout(() => isUserInteracting = false, 500);
+});
+
+nextBtn.addEventListener('click', () => {
+  isUserInteracting = true;
+  socket.emit('next');
+  setTimeout(() => isUserInteracting = false, 500);
+});
+
+prevBtn.addEventListener('click', () => {
+  isUserInteracting = true;
+  socket.emit('previous');
+  setTimeout(() => isUserInteracting = false, 500);
+});
+
+// UI updates
+function updatePlayState(isPlaying) {
+  playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
+}
+
+function updateUI() {
+  if (currentTrack) {
+    document.getElementById('currentTrackName').textContent = currentTrack.name;
+    document.getElementById('currentArtist').textContent = 'JamSync';
+    document.getElementById('nowPlayingMobile').textContent = currentTrack.name;
+  }
+  renderTrackList(filteredTracks);
+}
 
 // Helper function
 function formatTime(seconds) {
@@ -131,4 +247,49 @@ function formatTime(seconds) {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-// ... [rest of the existing code remains the same] ...
+// Player events
+audioPlayer.addEventListener('timeupdate', () => {
+  const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100 || 0;
+  progressBar.style.width = `${progress}%`;
+  currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
+});
+
+audioPlayer.addEventListener('play', () => {
+  if (currentTrack) {
+    document.querySelector(`.track[data-id="${currentTrack.id}"]`)?.classList.add('playing');
+  }
+});
+
+audioPlayer.addEventListener('pause', () => {
+  document.querySelector('.track.playing')?.classList.remove('playing');
+});
+
+audioPlayer.addEventListener('ended', () => {
+  document.querySelector('.track.playing')?.classList.remove('playing');
+  socket.emit('track-ended');
+});
+
+progressBar.parentElement.addEventListener('click', (e) => {
+  if (!currentTrack) return;
+  
+  const percent = e.offsetX / e.target.clientWidth;
+  const seekTime = percent * audioPlayer.duration;
+  
+  isUserInteracting = true;
+  const wasPlaying = !audioPlayer.paused;
+  
+  if (wasPlaying) {
+    audioPlayer.pause();
+  }
+  
+  audioPlayer.currentTime = seekTime;
+  
+  socket.emit('seek', { position: seekTime });
+  
+  setTimeout(() => {
+    isUserInteracting = false;
+    if (wasPlaying) {
+      audioPlayer.play().catch(e => console.log("Play error:", e));
+    }
+  }, 500);
+});
