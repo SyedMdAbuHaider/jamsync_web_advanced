@@ -771,14 +771,62 @@
     let tracks = [];
     let currentTrackIndex = -1;
     let isPlaying = false;
-    let isSeeking = false;
 
-    // emoji mapping for album art (same as new design)
+    // Emoji mapping for album art
     const emojiList = ['🌊','🪷','⚡','🌀','✨','🎵','🎸','🎹','🥁','🎤'];
 
-    // Load tracks from server
+    // Sample track data for testing - in production, this would come from your server
+    const sampleTracks = [
+        { 
+            name: "Midnight Vibes", 
+            artist: "Lofi Dreams", 
+            duration: "3:24", 
+            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+        },
+        { 
+            name: "Summer Rain", 
+            artist: "Chillhop", 
+            duration: "2:56", 
+            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3"
+        },
+        { 
+            name: "Neon Lights", 
+            artist: "Synthwave", 
+            duration: "4:12", 
+            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
+            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
+        },
+        { 
+            name: "Ocean Dreams", 
+            artist: "Ambient", 
+            duration: "5:30", 
+            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
+            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3"
+        },
+        { 
+            name: "Mountain High", 
+            artist: "Folk", 
+            duration: "3:45", 
+            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
+            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3"
+        },
+        { 
+            name: "City Lights", 
+            artist: "Jazz", 
+            duration: "4:18", 
+            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3",
+            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3"
+        }
+    ];
+
+    // Load tracks - first try API, then fallback to sample tracks
     fetch('/api/tracks')
-        .then(res => res.json())
+        .then(res => {
+            if (!res.ok) throw new Error('API not available');
+            return res.json();
+        })
         .then(data => {
             tracks = data;
             trackCountSpan.textContent = tracks.length;
@@ -786,7 +834,24 @@
             if (tracks.length > 0) {
                 loadTrack(0);
             }
+        })
+        .catch(err => {
+            console.log('Using sample tracks (API not available)');
+            tracks = sampleTracks;
+            trackCountSpan.textContent = tracks.length;
+            renderTracks(tracks);
+            if (tracks.length > 0) {
+                loadTrack(0);
+            }
         });
+
+    // Format time function
+    function formatTime(seconds) {
+        if (isNaN(seconds)) return '0:00';
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return mins + ':' + (secs < 10 ? '0' + secs : secs);
+    }
 
     // Render tracks
     function renderTracks(tracksToRender) {
@@ -797,7 +862,7 @@
             trackElement.dataset.index = index;
             
             const emoji = emojiList[index % emojiList.length];
-            const likes = Math.floor(Math.random() * 500) + 50; // random likes for demo
+            const likes = Math.floor(Math.random() * 500) + 50;
             
             trackElement.innerHTML = `
                 <div class="track-idx">
@@ -812,7 +877,7 @@
                     <div class="track-title">${track.name}</div>
                     <div class="track-meta">
                         <span>${track.artist}</span>
-                        <span class="dur">${track.duration}</span>
+                        <span class="dur">${track.duration || '3:30'}</span>
                     </div>
                 </div>
                 <div class="track-likes"><i class="fas fa-heart"></i> ${likes}</div>
@@ -820,10 +885,9 @@
             
             trackElement.addEventListener('click', () => {
                 loadTrack(index);
-                if (audioPlayer.paused) {
-                    audioPlayer.play();
-                    updatePlayButton(true);
-                }
+                audioPlayer.play()
+                    .then(() => updatePlayButton(true))
+                    .catch(e => console.log('Playback failed:', e));
             });
             
             musicList.appendChild(trackElement);
@@ -840,15 +904,21 @@
         // Update player info
         currentTrackName.textContent = track.name;
         currentArtist.textContent = track.artist;
-        totalTimeSpan.textContent = track.duration;
+        totalTimeSpan.textContent = track.duration || '3:30';
         nowPlayingMobile.textContent = track.name;
         
         // Update album art emoji
         const emoji = emojiList[index % emojiList.length];
         playerAlbumArt.textContent = emoji;
         
-        // Update audio source
-        audioPlayer.src = track.url || track.path || '';
+        // Update audio source - try different possible URL fields
+        const audioUrl = track.url || track.path || track.audioUrl || '';
+        if (audioUrl) {
+            audioPlayer.src = audioUrl;
+            audioPlayer.load(); // Force load the new source
+        } else {
+            console.warn('No audio URL for track:', track);
+        }
         
         // Update active class in track list
         document.querySelectorAll('.track').forEach((el, i) => {
@@ -863,26 +933,28 @@
         songProgress.style.width = '0%';
         currentTimeSpan.textContent = '0:00';
         
-        // Sync play state
-        if (isPlaying) {
-            audioPlayer.play();
-        }
+        // Update total time when metadata loads
+        audioPlayer.addEventListener('loadedmetadata', function() {
+            totalTimeSpan.textContent = formatTime(audioPlayer.duration);
+        }, { once: true });
     }
 
     // Play/Pause
     function togglePlay() {
         if (audioPlayer.src) {
             if (audioPlayer.paused) {
-                audioPlayer.play();
-                updatePlayButton(true);
+                audioPlayer.play()
+                    .then(() => updatePlayButton(true))
+                    .catch(e => console.log('Playback failed:', e));
             } else {
                 audioPlayer.pause();
                 updatePlayButton(false);
             }
         } else if (tracks.length > 0) {
             loadTrack(0);
-            audioPlayer.play();
-            updatePlayButton(true);
+            audioPlayer.play()
+                .then(() => updatePlayButton(true))
+                .catch(e => console.log('Playback failed:', e));
         }
     }
 
@@ -906,8 +978,9 @@
         let newIndex = currentTrackIndex - 1;
         if (newIndex < 0) newIndex = tracks.length - 1;
         loadTrack(newIndex);
-        audioPlayer.play();
-        updatePlayButton(true);
+        audioPlayer.play()
+            .then(() => updatePlayButton(true))
+            .catch(e => console.log('Playback failed:', e));
     }
 
     // Next track
@@ -916,8 +989,9 @@
         let newIndex = currentTrackIndex + 1;
         if (newIndex >= tracks.length) newIndex = 0;
         loadTrack(newIndex);
-        audioPlayer.play();
-        updatePlayButton(true);
+        audioPlayer.play()
+            .then(() => updatePlayButton(true))
+            .catch(e => console.log('Playback failed:', e));
     }
 
     // Update progress
@@ -925,10 +999,7 @@
         if (audioPlayer.duration) {
             const percent = (audioPlayer.currentTime / audioPlayer.duration) * 100;
             songProgress.style.width = percent + '%';
-            
-            const mins = Math.floor(audioPlayer.currentTime / 60);
-            const secs = Math.floor(audioPlayer.currentTime % 60);
-            currentTimeSpan.textContent = mins + ':' + (secs < 10 ? '0' + secs : secs);
+            currentTimeSpan.textContent = formatTime(audioPlayer.currentTime);
         }
     }
 
@@ -966,10 +1037,15 @@
 
     audioPlayer.addEventListener('ended', nextTrack);
 
+    // Handle audio errors
+    audioPlayer.addEventListener('error', function(e) {
+        console.error('Audio error:', e);
+        alert('Error playing audio. Please check the file URL.');
+    });
+
     // Playlist change (simulated)
     playlistSelect.addEventListener('change', function(e) {
         if (e.target.value === 'favorites') {
-            // Mock favorites - filter first 3 tracks
             const favorites = tracks.filter((_, i) => i < 3);
             renderTracks(favorites);
         } else {
