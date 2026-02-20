@@ -748,7 +748,7 @@
 <script src="/socket.io/socket.io.js"></script>
 <script>
 (function() {
-    // ---------- complete functionality from old script.js (preserved) ----------
+    // ---------- exact functionality from old script.js ----------
     const socket = io();
     const audioPlayer = document.getElementById('audioPlayer');
     const musicList = document.getElementById('musicList');
@@ -771,62 +771,14 @@
     let tracks = [];
     let currentTrackIndex = -1;
     let isPlaying = false;
+    let isSeeking = false;
 
-    // Emoji mapping for album art
+    // emoji mapping for album art (enhancement)
     const emojiList = ['🌊','🪷','⚡','🌀','✨','🎵','🎸','🎹','🥁','🎤'];
 
-    // Sample track data for testing - in production, this would come from your server
-    const sampleTracks = [
-        { 
-            name: "Midnight Vibes", 
-            artist: "Lofi Dreams", 
-            duration: "3:24", 
-            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
-        },
-        { 
-            name: "Summer Rain", 
-            artist: "Chillhop", 
-            duration: "2:56", 
-            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3"
-        },
-        { 
-            name: "Neon Lights", 
-            artist: "Synthwave", 
-            duration: "4:12", 
-            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
-        },
-        { 
-            name: "Ocean Dreams", 
-            artist: "Ambient", 
-            duration: "5:30", 
-            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3"
-        },
-        { 
-            name: "Mountain High", 
-            artist: "Folk", 
-            duration: "3:45", 
-            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
-            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3"
-        },
-        { 
-            name: "City Lights", 
-            artist: "Jazz", 
-            duration: "4:18", 
-            url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3",
-            path: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3"
-        }
-    ];
-
-    // Load tracks - first try API, then fallback to sample tracks
+    // Load tracks from server - EXACTLY like old file
     fetch('/api/tracks')
-        .then(res => {
-            if (!res.ok) throw new Error('API not available');
-            return res.json();
-        })
+        .then(res => res.json())
         .then(data => {
             tracks = data;
             trackCountSpan.textContent = tracks.length;
@@ -836,16 +788,12 @@
             }
         })
         .catch(err => {
-            console.log('Using sample tracks (API not available)');
-            tracks = sampleTracks;
-            trackCountSpan.textContent = tracks.length;
-            renderTracks(tracks);
-            if (tracks.length > 0) {
-                loadTrack(0);
-            }
+            console.error('Error loading tracks:', err);
+            // Show error message in the UI
+            musicList.innerHTML = '<div style="text-align: center; padding: 40px; color: var(--muted);">Failed to load tracks from server</div>';
         });
 
-    // Format time function
+    // Format time helper
     function formatTime(seconds) {
         if (isNaN(seconds)) return '0:00';
         const mins = Math.floor(seconds / 60);
@@ -853,7 +801,7 @@
         return mins + ':' + (secs < 10 ? '0' + secs : secs);
     }
 
-    // Render tracks
+    // Render tracks - matching old structure but with new design
     function renderTracks(tracksToRender) {
         musicList.innerHTML = '';
         tracksToRender.forEach((track, index) => {
@@ -861,8 +809,11 @@
             trackElement.className = `track ${index === currentTrackIndex ? 'active playing' : ''}`;
             trackElement.dataset.index = index;
             
-            const emoji = emojiList[index % emojiList.length];
-            const likes = Math.floor(Math.random() * 500) + 50;
+            // Use emoji or track artwork if available
+            const emoji = (track.artwork) ? '🎵' : emojiList[index % emojiList.length];
+            
+            // Handle duration - could be in different formats
+            let duration = track.duration || '3:30';
             
             trackElement.innerHTML = `
                 <div class="track-idx">
@@ -874,27 +825,29 @@
                 </div>
                 <div class="track-thumb">${emoji}</div>
                 <div class="track-info">
-                    <div class="track-title">${track.name}</div>
+                    <div class="track-title">${track.name || track.title || 'Unknown'}</div>
                     <div class="track-meta">
-                        <span>${track.artist}</span>
-                        <span class="dur">${track.duration || '3:30'}</span>
+                        <span>${track.artist || 'Unknown Artist'}</span>
+                        <span class="dur">${duration}</span>
                     </div>
                 </div>
-                <div class="track-likes"><i class="fas fa-heart"></i> ${likes}</div>
+                <div class="track-likes"><i class="fas fa-heart"></i> ${track.likes || Math.floor(Math.random() * 500) + 50}</div>
             `;
             
             trackElement.addEventListener('click', () => {
                 loadTrack(index);
-                audioPlayer.play()
-                    .then(() => updatePlayButton(true))
-                    .catch(e => console.log('Playback failed:', e));
+                if (audioPlayer.paused) {
+                    audioPlayer.play()
+                        .then(() => updatePlayButton(true))
+                        .catch(e => console.log('Playback failed:', e));
+                }
             });
             
             musicList.appendChild(trackElement);
         });
     }
 
-    // Load track by index
+    // Load track by index - exactly like old file
     function loadTrack(index) {
         if (index < 0 || index >= tracks.length) return;
         
@@ -902,23 +855,22 @@
         const track = tracks[index];
         
         // Update player info
-        currentTrackName.textContent = track.name;
-        currentArtist.textContent = track.artist;
-        totalTimeSpan.textContent = track.duration || '3:30';
-        nowPlayingMobile.textContent = track.name;
+        currentTrackName.textContent = track.name || track.title || 'Unknown';
+        currentArtist.textContent = track.artist || 'Unknown Artist';
+        
+        // Set duration if available
+        if (track.duration) {
+            totalTimeSpan.textContent = track.duration;
+        }
+        
+        nowPlayingMobile.textContent = track.name || track.title || 'Unknown';
         
         // Update album art emoji
-        const emoji = emojiList[index % emojiList.length];
+        const emoji = (track.artwork) ? '🎵' : emojiList[index % emojiList.length];
         playerAlbumArt.textContent = emoji;
         
-        // Update audio source - try different possible URL fields
-        const audioUrl = track.url || track.path || track.audioUrl || '';
-        if (audioUrl) {
-            audioPlayer.src = audioUrl;
-            audioPlayer.load(); // Force load the new source
-        } else {
-            console.warn('No audio URL for track:', track);
-        }
+        // Update audio source - use path or url like old file
+        audioPlayer.src = track.url || track.path || '';
         
         // Update active class in track list
         document.querySelectorAll('.track').forEach((el, i) => {
@@ -933,6 +885,12 @@
         songProgress.style.width = '0%';
         currentTimeSpan.textContent = '0:00';
         
+        // Sync play state
+        if (isPlaying) {
+            audioPlayer.play()
+                .catch(e => console.log('Playback failed:', e));
+        }
+
         // Update total time when metadata loads
         audioPlayer.addEventListener('loadedmetadata', function() {
             totalTimeSpan.textContent = formatTime(audioPlayer.duration);
@@ -999,6 +957,7 @@
         if (audioPlayer.duration) {
             const percent = (audioPlayer.currentTime / audioPlayer.duration) * 100;
             songProgress.style.width = percent + '%';
+            
             currentTimeSpan.textContent = formatTime(audioPlayer.currentTime);
         }
     }
@@ -1020,8 +979,9 @@
             renderTracks(tracks);
         } else {
             const filtered = tracks.filter(track => 
-                track.name.toLowerCase().includes(searchTerm) || 
-                track.artist.toLowerCase().includes(searchTerm)
+                (track.name || '').toLowerCase().includes(searchTerm) || 
+                (track.title || '').toLowerCase().includes(searchTerm) ||
+                (track.artist || '').toLowerCase().includes(searchTerm)
             );
             renderTracks(filtered);
         }
@@ -1040,12 +1000,12 @@
     // Handle audio errors
     audioPlayer.addEventListener('error', function(e) {
         console.error('Audio error:', e);
-        alert('Error playing audio. Please check the file URL.');
     });
 
-    // Playlist change (simulated)
+    // Playlist change (simulated - matches old file)
     playlistSelect.addEventListener('change', function(e) {
         if (e.target.value === 'favorites') {
+            // Mock favorites - filter first 3 tracks
             const favorites = tracks.filter((_, i) => i < 3);
             renderTracks(favorites);
         } else {
@@ -1053,16 +1013,16 @@
         }
     });
 
-    // Add current to playlist (simulated)
+    // Add current to playlist (simulated - matches old file)
     addToPlaylistBtn.addEventListener('click', function() {
         if (currentTrackIndex >= 0) {
-            alert(`Added "${tracks[currentTrackIndex].name}" to playlist`);
+            alert(`Added "${tracks[currentTrackIndex].name || tracks[currentTrackIndex].title}" to playlist`);
         } else {
             alert('No track selected');
         }
     });
 
-    // Socket.io sync events
+    // Socket.io sync events - exactly like old file
     socket.on('play', () => {
         audioPlayer.play();
         updatePlayButton(true);
@@ -1087,7 +1047,7 @@
         }
     });
 
-    // Emit local actions to server
+    // Emit local actions to server - exactly like old file
     audioPlayer.addEventListener('play', () => {
         socket.emit('play');
     });
