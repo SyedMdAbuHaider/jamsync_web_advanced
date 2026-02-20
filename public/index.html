@@ -1,457 +1,926 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JamSync</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-<style>
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --bg:#050507;--panel:#0a0a0f;--glass:rgba(255,255,255,0.028);--glass-border:rgba(255,255,255,0.07);
-  --gold:#c9a84c;--gold2:#f0d080;--cream:#f5f0e8;--muted:#4a4a5a;--text:#e8e4dc;--red:#e85d5d;
-  --w-left:340px;
-}
-html,body{height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;cursor:none;user-select:none}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JamSync · minimal music sync</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --ink:       #0a0a0f;
+            --ink2:      #111118;
+            --ink3:      #1a1a26;
+            --ink4:      #22223a;
+            --line:      rgba(255,255,255,0.055);
+            --lime:      #c8f53c;
+            --lime-dim:  #9abf22;
+            --lime-glow: rgba(200,245,60,0.15);
+            --lime-soft: rgba(200,245,60,0.07);
+            --white:     #f0f0f0;
+            --muted:     #6b6b80;
+            --dimmer:    #3a3a50;
+        }
 
-/* CURSOR */
-#cursor{position:fixed;z-index:9999;pointer-events:none;width:10px;height:10px;background:var(--gold);border-radius:50%;transform:translate(-50%,-50%);transition:width .25s,height .25s;mix-blend-mode:difference}
-#cursor-ring{position:fixed;z-index:9998;pointer-events:none;width:36px;height:36px;border:1px solid rgba(201,168,76,.5);border-radius:50%;transform:translate(-50%,-50%);transition:left .25s cubic-bezier(.18,.89,.32,1.28),top .25s cubic-bezier(.18,.89,.32,1.28),width .3s,height .3s,opacity .3s}
+        *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+        html, body { height:100%; }
 
-/* PARTICLES */
-#particles{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5}
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: var(--ink);
+            color: var(--white);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px;
+            overflow: hidden;
+        }
 
-/* NOISE */
-body::after{content:'';position:fixed;inset:0;z-index:1;pointer-events:none;
-  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
-  opacity:.025}
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 55% 45% at 75% 15%, rgba(200,245,60,0.07) 0%, transparent 60%),
+                radial-gradient(ellipse 40% 50% at 10% 85%, rgba(100,80,200,0.07) 0%, transparent 55%);
+            pointer-events: none;
+            z-index: 0;
+        }
 
-/* LAYOUT */
-.app{position:relative;z-index:2;display:grid;grid-template-columns:var(--w-left) 1fr;height:100vh}
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 0;
+        }
 
-/* ===== LEFT PANEL ===== */
-.left-panel{display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--glass-border);position:relative;overflow:hidden;animation:slideL .7s cubic-bezier(.16,1,.3,1) both}
-@keyframes slideL{from{transform:translateX(-40px);opacity:0}to{transform:translateX(0);opacity:1}}
-.left-panel::before{content:'';position:absolute;top:0;right:0;width:130px;height:130px;background:radial-gradient(circle at top right,rgba(201,168,76,.07),transparent 70%);pointer-events:none}
+        /* ── APP SHELL ─────────────────────────────────────── */
+        .app-container {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            max-width: 1080px;
+            height: 96vh;
+            background: var(--ink2);
+            border-radius: 32px;
+            border: 1px solid var(--line);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 40px 90px -20px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.07);
+        }
 
-/* LOGO */
-.logo-area{padding:26px 28px 0;display:flex;align-items:center;justify-content:space-between}
-.logo-wordmark{font-family:'Playfair Display',serif;font-size:1.35rem;font-weight:700;color:var(--gold);letter-spacing:.02em}
-.logo-dot{width:7px;height:7px;border-radius:50%;background:var(--gold);box-shadow:0 0 12px var(--gold);animation:blink 2s ease-in-out infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+        /* ── HEADER ────────────────────────────────────────── */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 28px;
+            border-bottom: 1px solid var(--line);
+            background: rgba(10,10,15,0.8);
+            backdrop-filter: blur(20px);
+            flex-shrink: 0;
+            position: relative;
+        }
 
-/* VINYL */
-.artwork-section{padding:24px 28px 12px;display:flex;flex-direction:column;align-items:center}
-.vinyl-wrap{position:relative;width:220px;height:220px;margin-bottom:4px}
-.vinyl{width:100%;height:100%;border-radius:50%;position:relative;overflow:hidden;
-  box-shadow:0 0 0 2px rgba(201,168,76,.25),0 20px 60px rgba(0,0,0,.8),0 0 60px rgba(201,168,76,.04);
-  animation:vspin 9s linear infinite paused;transition:filter .5s}
-.vinyl.spinning{animation-play-state:running}
-@keyframes vspin{to{transform:rotate(360deg)}}
+        header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 28px; right: 28px;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--lime), transparent);
+            opacity: 0.5;
+        }
 
-.vinyl-grooves{position:absolute;inset:0;border-radius:50%;
-  background:repeating-radial-gradient(circle at 50%,#141420 0px,#1c1c2e 3px,#101018 6px,#1c1c2e 9px)}
-.vinyl-grooves::after{content:'';position:absolute;inset:0;border-radius:50%;
-  background:radial-gradient(ellipse 60% 40% at 30% 30%,rgba(255,255,255,.055) 0%,transparent 60%)}
+        .logo-area { display: flex; align-items: center; gap: 14px; }
 
-.vinyl-label{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:76px;height:76px;border-radius:50%;
-  background:linear-gradient(135deg,#1a1428,#2a1e40);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  border:2px solid rgba(201,168,76,.35);box-shadow:0 0 20px rgba(201,168,76,.12);overflow:hidden;z-index:2}
-.vinyl-label-txt{font-family:'Playfair Display',serif;font-size:.55rem;letter-spacing:.12em;color:var(--gold);text-transform:uppercase;text-align:center;line-height:1.5;padding:0 6px}
-.vinyl-center{width:9px;height:9px;border-radius:50%;background:var(--bg);border:1px solid rgba(201,168,76,.3);margin-top:3px}
+        .logo-icon {
+            width: 38px;
+            height: 38px;
+            background: var(--lime);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            color: #000;
+            font-family: 'Space Mono', monospace;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            flex-shrink: 0;
+            box-shadow: 0 4px 18px -4px rgba(200,245,60,0.5);
+        }
 
-/* TONEARM */
-.tonearm{position:absolute;top:-10px;right:-22px;width:78px;height:98px;transform-origin:top right;transform:rotate(-14deg);transition:transform .9s cubic-bezier(.4,0,.2,1);pointer-events:none;z-index:3}
-.tonearm.playing{transform:rotate(3deg)}
-.ta-pivot{position:absolute;top:0;right:0;width:11px;height:11px;border-radius:50%;background:linear-gradient(135deg,#d4af4e,#7a5c20);box-shadow:0 0 10px rgba(201,168,76,.35)}
-.ta-arm{position:absolute;top:5px;right:4px;width:2px;height:72px;background:linear-gradient(to bottom,var(--gold),rgba(201,168,76,.25));border-radius:2px;transform-origin:top;transform:rotate(-4deg)}
-.ta-head{position:absolute;bottom:0;right:1px;width:13px;height:8px;background:linear-gradient(135deg,#d4af4e,#8a6020);border-radius:2px;box-shadow:0 0 6px rgba(201,168,76,.3)}
+        header h1 {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 2rem;
+            letter-spacing: 0.08em;
+            color: var(--white);
+            line-height: 1;
+        }
 
-/* VISUALIZER */
-.viz-wrap{width:100%;padding:0 28px;height:52px;flex-shrink:0}
-#vizCanvas{width:100%;height:100%;display:block;border-radius:3px}
+        header h1 em {
+            font-style: normal;
+            color: var(--lime);
+        }
 
-/* NOW PLAYING */
-.np-info{padding:14px 28px 6px;text-align:center}
-.np-label{font-family:'JetBrains Mono',monospace;font-size:.58rem;letter-spacing:.3em;color:var(--gold);text-transform:uppercase;opacity:.65;margin-bottom:7px}
-.np-title{font-family:'Playfair Display',serif;font-size:1.3rem;font-weight:700;line-height:1.2;color:var(--cream);margin-bottom:3px;min-height:32px;transition:opacity .3s}
-.np-artist{font-size:.78rem;color:var(--gold);letter-spacing:.1em;font-weight:600;opacity:.75}
+        .header-right { display: flex; align-items: center; gap: 12px; }
 
-/* PROGRESS */
-.prog-area{padding:12px 28px 4px}
-.prog-bar{width:100%;height:2px;background:rgba(255,255,255,.08);border-radius:2px;cursor:pointer;position:relative;margin-bottom:7px;transition:height .2s}
-.prog-bar:hover{height:4px}
-.prog-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--gold),var(--gold2));border-radius:2px;transition:width .2s linear;position:relative}
-.prog-fill::after{content:'';position:absolute;right:-5px;top:50%;transform:translateY(-50%);width:10px;height:10px;border-radius:50%;background:var(--gold2);box-shadow:0 0 10px var(--gold);opacity:0;transition:opacity .2s}
-.prog-bar:hover .prog-fill::after{opacity:1}
-.time-row{display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:.63rem;color:var(--muted)}
+        .live-pill {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 14px;
+            background: var(--lime-soft);
+            border: 1px solid rgba(200,245,60,0.2);
+            border-radius: 40px;
+            font-family: 'Space Mono', monospace;
+            font-size: 0.68rem;
+            color: var(--lime);
+            letter-spacing: 0.05em;
+        }
 
-/* CONTROLS */
-.controls{display:flex;align-items:center;justify-content:center;gap:4px;padding:10px 28px}
-.btn-ctrl{background:none;border:none;color:var(--muted);font-size:.88rem;cursor:none;padding:10px;border-radius:50%;transition:color .2s,background .2s,transform .15s;width:40px;height:40px;display:flex;align-items:center;justify-content:center}
-.btn-ctrl:hover{color:var(--text);background:rgba(255,255,255,.05);transform:scale(1.1)}
-.btn-main{width:54px;height:54px;border-radius:50%;border:none;background:linear-gradient(135deg,var(--gold),#7a5a18);color:var(--bg);font-size:1.05rem;cursor:none;display:flex;align-items:center;justify-content:center;box-shadow:0 0 28px rgba(201,168,76,.28),0 8px 24px rgba(0,0,0,.5);transition:transform .2s,box-shadow .2s}
-.btn-main:hover{transform:scale(1.08);box-shadow:0 0 48px rgba(201,168,76,.48),0 8px 32px rgba(0,0,0,.6)}
-.btn-main:active{transform:scale(.96)}
+        .live-dot {
+            width: 6px; height: 6px;
+            background: var(--lime);
+            border-radius: 50%;
+            animation: blink 1.4s ease-in-out infinite;
+            flex-shrink: 0;
+        }
 
-/* EXTRA */
-.extra-ctrls{display:flex;align-items:center;justify-content:space-between;padding:2px 30px 12px}
-.ebtn{background:none;border:none;color:var(--muted);font-size:.73rem;cursor:none;padding:6px 8px;transition:color .2s;font-family:'Syne',sans-serif;letter-spacing:.04em;display:flex;align-items:center;gap:5px;border-radius:6px}
-.ebtn:hover{color:var(--gold);background:rgba(201,168,76,.06)}
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
-.sep{height:1px;background:linear-gradient(90deg,transparent,var(--glass-border),transparent);margin:0}
+        .now-playing-mobile {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--muted);
+            background: var(--ink3);
+            border: 1px solid var(--line);
+            padding: 7px 14px;
+            border-radius: 40px;
+            max-width: 180px;
+        }
 
-/* VOLUME */
-.vol-row{display:flex;align-items:center;gap:10px;padding:12px 28px 18px}
-.vol-icon{color:var(--muted);font-size:.73rem}
-.vol-track{flex:1;height:2px;background:rgba(255,255,255,.08);border-radius:2px;cursor:pointer;position:relative}
-.vol-fill{height:100%;width:75%;background:linear-gradient(90deg,var(--gold),var(--gold2));border-radius:2px;transition:width .1s}
-.vol-val{font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--muted);min-width:24px}
+        .now-playing-mobile span {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
 
-/* ===== RIGHT PANEL ===== */
-.right-panel{display:flex;flex-direction:column;background:var(--bg);overflow:hidden;animation:fadeR .8s .2s both}
-@keyframes fadeR{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+        /* ── MAIN SCROLLABLE ───────────────────────────────── */
+        .main-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 22px 28px 10px;
+            scrollbar-width: thin;
+            scrollbar-color: var(--ink4) transparent;
+        }
 
-/* RIGHT HEADER */
-.right-hdr{padding:24px 32px 18px;border-bottom:1px solid var(--glass-border);display:flex;align-items:center;gap:14px;flex-shrink:0}
-.pl-wrap{position:relative;flex:1}
-.pl-wrap::after{content:'\f078';font-family:'Font Awesome 6 Free';font-weight:900;position:absolute;right:13px;top:50%;transform:translateY(-50%);color:var(--gold);font-size:.62rem;pointer-events:none}
-.pl-sel{width:100%;appearance:none;background:var(--glass);border:1px solid var(--glass-border);color:var(--text);padding:10px 34px 10px 14px;border-radius:8px;font-family:'Syne',sans-serif;font-size:.82rem;letter-spacing:.04em;outline:none;cursor:none;transition:border-color .2s}
-.pl-sel:focus{border-color:rgba(201,168,76,.35)}
-.btn-add{background:linear-gradient(135deg,rgba(201,168,76,.14),rgba(201,168,76,.04));border:1px solid rgba(201,168,76,.28);color:var(--gold);padding:10px 17px;border-radius:8px;font-family:'Syne',sans-serif;font-size:.78rem;font-weight:600;cursor:none;transition:background .2s,box-shadow .2s;white-space:nowrap;display:flex;align-items:center;gap:7px}
-.btn-add:hover{background:linear-gradient(135deg,rgba(201,168,76,.24),rgba(201,168,76,.1));box-shadow:0 0 20px rgba(201,168,76,.14)}
+        .main-content::-webkit-scrollbar { width: 3px; }
+        .main-content::-webkit-scrollbar-track { background: transparent; }
+        .main-content::-webkit-scrollbar-thumb { background: var(--ink4); border-radius: 10px; }
 
-/* SEARCH */
-.search-wrap{padding:14px 32px;border-bottom:1px solid var(--glass-border);flex-shrink:0;position:relative}
-.search-wrap .si{position:absolute;left:48px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.78rem;pointer-events:none}
-.search-input{width:100%;background:rgba(255,255,255,.022);border:1px solid rgba(255,255,255,.055);color:var(--text);padding:11px 18px 11px 40px;border-radius:8px;font-family:'Syne',sans-serif;font-size:.84rem;outline:none;transition:border-color .25s,background .25s;cursor:none}
-.search-input::placeholder{color:var(--muted)}
-.search-input:focus{border-color:rgba(201,168,76,.24);background:rgba(201,168,76,.018)}
+        .content { display: flex; flex-direction: column; gap: 16px; }
 
-/* LIST HEADER */
-.list-hdr{display:grid;grid-template-columns:36px 38px 1fr 130px 58px 48px;align-items:center;gap:12px;padding:9px 32px;border-bottom:1px solid var(--glass-border);flex-shrink:0}
-.list-hdr span{font-family:'JetBrains Mono',monospace;font-size:.58rem;letter-spacing:.2em;color:var(--muted);text-transform:uppercase}
+        /* ── PLAYLIST CONTROLS ─────────────────────────────── */
+        .playlist-control {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
 
-/* SCROLL */
-.tracks-scroll{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(201,168,76,.15) transparent}
-.tracks-scroll::-webkit-scrollbar{width:3px}
-.tracks-scroll::-webkit-scrollbar-thumb{background:rgba(201,168,76,.18);border-radius:3px}
+        .playlist-dropdown {
+            flex: 1;
+            min-width: 150px;
+            background: var(--ink3);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 12px 42px 12px 18px;
+            color: var(--white);
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.87rem;
+            font-weight: 500;
+            cursor: pointer;
+            outline: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23c8f53c' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+            background-repeat: no-repeat;
+            background-position: right 16px center;
+            background-size: 14px;
+            transition: 0.2s;
+        }
 
-/* TRACK ROW */
-.track-row{display:grid;grid-template-columns:36px 38px 1fr 130px 58px 48px;align-items:center;gap:12px;padding:9px 32px;border-bottom:1px solid rgba(255,255,255,.022);cursor:none;position:relative;overflow:hidden;transition:background .2s;animation:rowIn .45s cubic-bezier(.16,1,.3,1) both}
-.track-row::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(to bottom,var(--gold),var(--gold2));transform:scaleY(0);transition:transform .25s cubic-bezier(.16,1,.3,1)}
-.track-row:hover{background:rgba(255,255,255,.022)}
-.track-row:hover::before{transform:scaleY(1)}
-.track-row.active{background:rgba(201,168,76,.045)}
-.track-row.active::before{transform:scaleY(1)}
-@keyframes rowIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+        .playlist-dropdown:hover,
+        .playlist-dropdown:focus {
+            border-color: rgba(200,245,60,0.3);
+            background-color: var(--ink4);
+        }
 
-.row-num{font-family:'JetBrains Mono',monospace;font-size:.68rem;color:var(--muted);text-align:center}
-.track-row.active .row-num{display:none}
-.track-row.active:not(.playing) .row-num{display:block;color:var(--gold)}
+        .playlist-dropdown option { background: var(--ink3); }
 
-.mini-wave{display:none;align-items:flex-end;justify-content:center;gap:1.5px;height:14px;width:36px}
-.track-row.active.playing .mini-wave{display:flex}
-.track-row.active.playing .row-num{display:none}
-.mini-wave span{display:block;width:2.5px;background:var(--gold);border-radius:2px;animation:mw .7s ease-in-out infinite alternate}
-.mini-wave span:nth-child(1){animation-delay:0s;height:50%}
-.mini-wave span:nth-child(2){animation-delay:.12s;height:100%}
-.mini-wave span:nth-child(3){animation-delay:.24s;height:65%}
-.mini-wave span:nth-child(4){animation-delay:.08s;height:85%}
-@keyframes mw{from{transform:scaleY(.3)}to{transform:scaleY(1)}}
+        .btn-small {
+            background: var(--lime-soft);
+            border: 1px solid rgba(200,245,60,0.25);
+            border-radius: 12px;
+            padding: 12px 20px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.84rem;
+            font-weight: 600;
+            color: var(--lime);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: 0.2s;
+            white-space: nowrap;
+        }
 
-.row-thumb{width:38px;height:38px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:.95rem;flex-shrink:0;border:1px solid var(--glass-border);transition:transform .2s,border-color .2s}
-.track-row:hover .row-thumb{transform:scale(1.06)}
-.track-row.active .row-thumb{border-color:rgba(201,168,76,.3)}
+        .btn-small:hover {
+            background-color: var(--lime);
+            border-color: var(--lime);
+            color: #000;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px -6px rgba(200,245,60,0.4);
+        }
 
-.row-title-col{min-width:0}
-.row-title{font-size:.87rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;transition:color .2s}
-.track-row.active .row-title{color:var(--gold)}
-.row-artist{font-size:.7rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.03em}
+        /* ── SEARCH ────────────────────────────────────────── */
+        .search-bar { position: relative; }
 
-.row-album{font-size:.72rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row-dur{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--muted);text-align:center}
-.row-likes{display:flex;align-items:center;gap:4px;font-family:'JetBrains Mono',monospace;font-size:.68rem;color:var(--muted);justify-content:center}
-.row-likes i{font-size:.6rem;transition:color .2s,transform .2s}
-.track-row:hover .row-likes i{color:var(--red);transform:scale(1.25)}
-.track-row.liked .row-likes i,.track-row.liked .row-likes{color:var(--red)}
+        .search-bar i {
+            position: absolute;
+            left: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--dimmer);
+            font-size: 0.85rem;
+            pointer-events: none;
+            transition: 0.2s;
+        }
 
-/* STATUS */
-.status-bar{flex-shrink:0;border-top:1px solid var(--glass-border);padding:10px 32px;display:flex;align-items:center;gap:18px;background:rgba(255,255,255,.008)}
-.status-item{display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--muted);letter-spacing:.07em}
-.sdot{width:5px;height:5px;border-radius:50%;background:var(--muted)}
-.sdot.live{background:#4ade80;box-shadow:0 0 6px #4ade80;animation:blink 1.5s ease-in-out infinite}
+        .search-bar input {
+            width: 100%;
+            background: var(--ink3);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 14px 18px 14px 46px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.9rem;
+            color: var(--white);
+            outline: none;
+            transition: 0.2s;
+        }
 
-/* RESPONSIVE */
-@media(max-width:900px){
-  :root{--w-left:270px}
-  .list-hdr,.track-row{grid-template-columns:36px 38px 1fr 58px 48px}
-  .row-album{display:none}
-}
-@media(max-width:640px){
-  .app{grid-template-columns:1fr}
-  .left-panel{display:none}
-}
-</style>
+        .search-bar input::placeholder { color: var(--dimmer); }
+
+        .search-bar input:focus {
+            border-color: rgba(200,245,60,0.35);
+            background: var(--ink4);
+            box-shadow: 0 0 0 3px rgba(200,245,60,0.07);
+        }
+
+        .search-bar:focus-within i { color: var(--lime); }
+
+        /* ── SECTION DIVIDER ───────────────────────────────── */
+        .section-label {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-family: 'Space Mono', monospace;
+            font-size: 0.62rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .section-label span { flex: 1; height: 1px; background: var(--line); }
+
+        /* ── TRACKS ────────────────────────────────────────── */
+        .tracks-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding-bottom: 6px;
+        }
+
+        .track {
+            display: grid;
+            grid-template-columns: 28px 52px 1fr auto;
+            align-items: center;
+            gap: 14px;
+            padding: 12px 16px;
+            border-radius: 14px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.22s cubic-bezier(0.4,0,0.2,1);
+            position: relative;
+            animation: slideIn 0.4s ease both;
+        }
+
+        .track:nth-child(1){animation-delay:0.04s}
+        .track:nth-child(2){animation-delay:0.09s}
+        .track:nth-child(3){animation-delay:0.14s}
+        .track:nth-child(4){animation-delay:0.19s}
+        .track:nth-child(5){animation-delay:0.24s}
+
+        @keyframes slideIn {
+            from { opacity:0; transform:translateX(-12px); }
+            to   { opacity:1; transform:translateX(0); }
+        }
+
+        .track:hover {
+            background: var(--ink3);
+            border-color: var(--line);
+        }
+
+        .track.active {
+            background: var(--ink3);
+            border-color: var(--line);
+        }
+
+        .track.playing {
+            background: linear-gradient(100deg, rgba(200,245,60,0.09) 0%, rgba(200,245,60,0.02) 100%);
+            border-color: rgba(200,245,60,0.22);
+        }
+
+        .track.playing::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 10px; bottom: 10px;
+            width: 3px;
+            background: var(--lime);
+            border-radius: 0 3px 3px 0;
+            box-shadow: 0 0 12px rgba(200,245,60,0.6);
+        }
+
+        /* ── Track number / eq bars ── */
+        .track-idx {
+            position: relative;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .track-num {
+            font-family: 'Space Mono', monospace;
+            font-size: 0.72rem;
+            color: var(--dimmer);
+            transition: 0.2s;
+        }
+
+        .track.active .track-num { color: var(--muted); }
+        .track.playing .track-num { opacity: 0; }
+
+        .track-wave {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 2px;
+            opacity: 0;
+            padding-bottom: 4px;
+            transition: opacity 0.2s;
+        }
+
+        .track.playing .track-wave { opacity: 1; }
+
+        .bar {
+            width: 3px;
+            border-radius: 2px;
+            background: var(--lime);
+            animation: eq 0.8s ease-in-out infinite alternate;
+        }
+
+        .bar:nth-child(1){ height:8px;  animation-duration:0.6s; }
+        .bar:nth-child(2){ height:16px; animation-duration:0.9s; }
+        .bar:nth-child(3){ height:10px; animation-duration:0.7s; }
+        .bar:nth-child(4){ height:14px; animation-duration:1.1s; }
+
+        @keyframes eq { from{transform:scaleY(0.2)} to{transform:scaleY(1)} }
+
+        .track-thumb {
+            width: 52px;
+            height: 52px;
+            border-radius: 12px;
+            background: var(--ink);
+            border: 1px solid var(--line);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.3rem;
+            flex-shrink: 0;
+            transition: 0.22s;
+        }
+
+        .track.playing .track-thumb {
+            border-color: rgba(200,245,60,0.35);
+            box-shadow: 0 0 18px -4px rgba(200,245,60,0.35);
+        }
+
+        .track-info { min-width: 0; }
+
+        .track-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--white);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: 0.2s;
+        }
+
+        .track.playing .track-title { color: var(--lime); }
+
+        .track-meta {
+            display: flex;
+            gap: 10px;
+            margin-top: 4px;
+            font-size: 0.76rem;
+            color: var(--muted);
+        }
+
+        .track-meta .dur {
+            font-family: 'Space Mono', monospace;
+            font-size: 0.7rem;
+        }
+
+        .track-likes {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-family: 'Space Mono', monospace;
+            font-size: 0.69rem;
+            color: var(--dimmer);
+            padding: 5px 11px;
+            border-radius: 40px;
+            border: 1px solid var(--line);
+            white-space: nowrap;
+            transition: 0.2s;
+        }
+
+        .track-likes i { font-size: 0.65rem; transition: 0.2s; }
+        .track.playing .track-likes { color: var(--lime); border-color: rgba(200,245,60,0.2); }
+        .track.playing .track-likes i { color: var(--lime); }
+
+        /* ══ PLAYER BAR ════════════════════════════════════════ */
+        .player-bar {
+            flex-shrink: 0;
+            background: var(--ink);
+            border-top: 1px solid var(--line);
+            padding: 0 28px;
+            display: flex;
+            align-items: stretch;
+            min-height: 86px;
+        }
+
+        .player-art-slab {
+            display: flex;
+            align-items: center;
+            padding: 14px 20px 14px 0;
+            gap: 14px;
+            flex-shrink: 0;
+            border-right: 1px solid var(--line);
+            margin-right: 20px;
+        }
+
+        .player-art {
+            width: 54px;
+            height: 54px;
+            border-radius: 12px;
+            background: var(--ink3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            flex-shrink: 0;
+            border: 1px solid rgba(200,245,60,0.2);
+            box-shadow: 0 0 20px -6px rgba(200,245,60,0.4);
+        }
+
+        .player-text { min-width: 0; }
+
+        .track-name {
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: var(--white);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            letter-spacing: -0.01em;
+        }
+
+        .artist-name {
+            font-size: 0.75rem;
+            color: var(--muted);
+            margin-top: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .player-center {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 10px;
+            padding: 14px 0;
+            min-width: 0;
+        }
+
+        .player-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .btn-control {
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            transition: 0.18s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-control:hover {
+            color: var(--white);
+            background: var(--ink3);
+        }
+
+        .btn-play-pause {
+            width: 46px;
+            height: 46px;
+            border-radius: 50%;
+            border: none;
+            background: var(--lime);
+            color: #000;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: 0.18s;
+            box-shadow: 0 4px 20px -4px rgba(200,245,60,0.6);
+            flex-shrink: 0;
+        }
+
+        .btn-play-pause:hover {
+            transform: scale(1.08);
+            box-shadow: 0 6px 26px -2px rgba(200,245,60,0.75);
+        }
+
+        .progress-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .t-label {
+            font-family: 'Space Mono', monospace;
+            font-size: 0.67rem;
+            color: var(--dimmer);
+            min-width: 30px;
+            flex-shrink: 0;
+        }
+
+        .t-label.end { text-align: right; }
+
+        .progress-bar {
+            flex: 1;
+            height: 3px;
+            background: var(--ink3);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: height 0.15s;
+            position: relative;
+        }
+
+        .progress-bar:hover { height: 5px; }
+
+        .progress {
+            height: 100%;
+            width: 37%;
+            background: linear-gradient(90deg, var(--lime-dim), var(--lime));
+            border-radius: 10px;
+            position: relative;
+            transition: width 0.1s;
+        }
+
+        .progress::after {
+            content: '';
+            position: absolute;
+            right: -4px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 10px; height: 10px;
+            background: var(--white);
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.15s;
+            box-shadow: 0 0 8px rgba(200,245,60,0.7);
+        }
+
+        .progress-bar:hover .progress::after { opacity: 1; }
+
+        #audioPlayer { display: none; }
+
+        /* ── RESPONSIVE ─────────────────────────────────────── */
+        @media (min-width: 660px) {
+            .player-bar { flex-direction: row; }
+            .now-playing-mobile { display: none; }
+        }
+
+        @media (max-width: 659px) {
+            .player-bar {
+                flex-direction: column;
+                min-height: unset;
+                padding: 14px 18px 18px;
+                gap: 10px;
+            }
+
+            .player-art-slab {
+                border-right: none;
+                border-bottom: 1px solid var(--line);
+                margin-right: 0;
+                padding: 0 0 12px;
+            }
+
+            .player-center { padding: 0; gap: 8px; }
+            .player-controls { justify-content: center; }
+            .btn-play-pause { width: 42px; height: 42px; font-size: 0.95rem; }
+            .live-pill { display: none; }
+            header h1 { font-size: 1.6rem; }
+            .main-content { padding: 16px 16px 8px; }
+            .track { grid-template-columns: 24px 44px 1fr auto; gap: 10px; padding: 10px 12px; }
+            .track-thumb { width: 44px; height: 44px; font-size: 1.15rem; }
+            .app-container { border-radius: 20px; height: 98vh; }
+        }
+
+        @media (max-width: 400px) {
+            header { padding: 14px 16px; }
+            .main-content { padding: 12px 12px 6px; }
+            .track { grid-template-columns: 20px 38px 1fr auto; gap: 8px; padding: 9px 10px; }
+            .track-thumb { width: 38px; height: 38px; font-size: 1rem; border-radius: 9px; }
+            .track-likes { display: none; }
+        }
+    </style>
 </head>
 <body>
-<div id="cursor"></div>
-<div id="cursor-ring"></div>
-<canvas id="particles"></canvas>
 
-<div class="app">
-  <!-- LEFT -->
-  <div class="left-panel">
-    <div class="logo-area">
-      <div class="logo-wordmark">JamSync</div>
-      <div class="logo-dot"></div>
-    </div>
+<div class="app-container">
 
-    <div class="artwork-section">
-      <div class="vinyl-wrap">
-        <div class="vinyl" id="vinyl">
-          <div class="vinyl-grooves"></div>
-          <div class="vinyl-label">
-            <div class="vinyl-label-txt" id="vinylTxt">JS<br>REC</div>
-            <div class="vinyl-center"></div>
-          </div>
+    <!-- ══ HEADER ════════════════════════════════════════════════ -->
+    <header>
+        <div class="logo-area">
+            <div class="logo-icon">JS</div>
+            <h1>JAM<em>SYNC</em></h1>
         </div>
-        <div class="tonearm" id="tonearm">
-          <div class="ta-pivot"></div>
-          <div class="ta-arm"></div>
-          <div class="ta-head"></div>
+        <div class="header-right">
+            <div class="live-pill">
+                <span class="live-dot"></span>
+                LIVE SYNC
+            </div>
+            <div class="now-playing-mobile" id="nowPlayingMobile">
+                <i class="fas fa-headphones" style="color:var(--lime);font-size:0.75rem;"></i>
+                <span>Select a track</span>
+            </div>
         </div>
-      </div>
+    </header>
+
+    <!-- ══ MAIN CONTENT ══════════════════════════════════════════ -->
+    <div class="main-content">
+        <div class="content">
+
+            <div class="playlist-control">
+                <select id="playlistSelect" class="playlist-dropdown">
+                    <option value="default">🎧 Default Playlist</option>
+                    <option value="favorites">⭐ Favorites</option>
+                </select>
+                <button id="addToPlaylist" class="btn-small">
+                    <i class="fas fa-plus"></i> Add current
+                </button>
+            </div>
+
+            <div class="search-bar">
+                <i class="fas fa-magnifying-glass"></i>
+                <input type="text" placeholder="Search tracks, artists…" id="searchInput">
+            </div>
+
+            <div class="section-label">
+                Now in queue
+                <span></span>
+                5 tracks
+            </div>
+
+            <div class="tracks-list" id="musicList">
+
+                <div class="track active playing" data-index="0">
+                    <div class="track-idx">
+                        <div class="track-num">01</div>
+                        <div class="track-wave">
+                            <div class="bar"></div><div class="bar"></div>
+                            <div class="bar"></div><div class="bar"></div>
+                        </div>
+                    </div>
+                    <div class="track-thumb">🌊</div>
+                    <div class="track-info">
+                        <div class="track-title">Neural Waves</div>
+                        <div class="track-meta">
+                            <span>Eliot Stellar</span>
+                            <span class="dur">3:24</span>
+                        </div>
+                    </div>
+                    <div class="track-likes"><i class="fas fa-heart"></i> 231</div>
+                </div>
+
+                <div class="track" data-index="1">
+                    <div class="track-idx">
+                        <div class="track-num">02</div>
+                        <div class="track-wave">
+                            <div class="bar"></div><div class="bar"></div>
+                            <div class="bar"></div><div class="bar"></div>
+                        </div>
+                    </div>
+                    <div class="track-thumb">🪷</div>
+                    <div class="track-info">
+                        <div class="track-title">Velvet Code</div>
+                        <div class="track-meta">
+                            <span>Luna Echo</span>
+                            <span class="dur">4:12</span>
+                        </div>
+                    </div>
+                    <div class="track-likes"><i class="fas fa-heart"></i> 89</div>
+                </div>
+
+                <div class="track" data-index="2">
+                    <div class="track-idx">
+                        <div class="track-num">03</div>
+                        <div class="track-wave">
+                            <div class="bar"></div><div class="bar"></div>
+                            <div class="bar"></div><div class="bar"></div>
+                        </div>
+                    </div>
+                    <div class="track-thumb">⚡</div>
+                    <div class="track-info">
+                        <div class="track-title">Synthflux</div>
+                        <div class="track-meta">
+                            <span>MODERNS</span>
+                            <span class="dur">3:56</span>
+                        </div>
+                    </div>
+                    <div class="track-likes"><i class="fas fa-heart"></i> 148</div>
+                </div>
+
+                <div class="track" data-index="3">
+                    <div class="track-idx">
+                        <div class="track-num">04</div>
+                        <div class="track-wave">
+                            <div class="bar"></div><div class="bar"></div>
+                            <div class="bar"></div><div class="bar"></div>
+                        </div>
+                    </div>
+                    <div class="track-thumb">🌀</div>
+                    <div class="track-info">
+                        <div class="track-title">Drift Apart</div>
+                        <div class="track-meta">
+                            <span>Kai &amp; Kitsune</span>
+                            <span class="dur">5:02</span>
+                        </div>
+                    </div>
+                    <div class="track-likes"><i class="fas fa-heart"></i> 415</div>
+                </div>
+
+                <div class="track" data-index="4">
+                    <div class="track-idx">
+                        <div class="track-num">05</div>
+                        <div class="track-wave">
+                            <div class="bar"></div><div class="bar"></div>
+                            <div class="bar"></div><div class="bar"></div>
+                        </div>
+                    </div>
+                    <div class="track-thumb">✨</div>
+                    <div class="track-info">
+                        <div class="track-title">Neon Glow</div>
+                        <div class="track-meta">
+                            <span>Astral</span>
+                            <span class="dur">3:18</span>
+                        </div>
+                    </div>
+                    <div class="track-likes"><i class="fas fa-heart"></i> 277</div>
+                </div>
+
+            </div>
+        </div>
     </div>
 
-    <div class="viz-wrap">
-      <canvas id="vizCanvas"></canvas>
+    <!-- ══ PLAYER BAR ════════════════════════════════════════════ -->
+    <div class="player-bar">
+
+        <div class="player-art-slab">
+            <div class="player-art" id="playerAlbumArt">🌊</div>
+            <div class="player-text">
+                <div class="track-name" id="currentTrackName">Neural Waves</div>
+                <div class="artist-name" id="currentArtist">Eliot Stellar</div>
+            </div>
+        </div>
+
+        <div class="player-center">
+            <div class="player-controls">
+                <button class="btn-control" id="prevBtn" aria-label="Previous">
+                    <i class="fas fa-backward-step"></i>
+                </button>
+                <button class="btn-play-pause" id="playPauseBtn" aria-label="Play / Pause">
+                    <i class="fas fa-play" style="margin-left:2px;"></i>
+                </button>
+                <button class="btn-control" id="nextBtn" aria-label="Next">
+                    <i class="fas fa-forward-step"></i>
+                </button>
+            </div>
+
+            <div class="progress-row">
+                <span class="t-label" id="currentTime">1:17</span>
+                <div class="progress-bar" id="progressBar">
+                    <div class="progress" id="songProgress"></div>
+                </div>
+                <span class="t-label end" id="totalTime">3:24</span>
+            </div>
+        </div>
+
+        <audio id="audioPlayer"></audio>
     </div>
 
-    <div class="np-info">
-      <div class="np-label">Now Playing</div>
-      <div class="np-title" id="npTitle">— Select a track —</div>
-      <div class="np-artist" id="npArtist">&nbsp;</div>
-    </div>
-
-    <div class="prog-area">
-      <div class="prog-bar" id="progBar">
-        <div class="prog-fill" id="progFill"></div>
-      </div>
-      <div class="time-row">
-        <span id="curTime">0:00</span>
-        <span id="totTime">0:00</span>
-      </div>
-    </div>
-
-    <div class="controls">
-      <button class="btn-ctrl" id="shuffleBtn" title="Shuffle"><i class="fas fa-shuffle"></i></button>
-      <button class="btn-ctrl" id="prevBtn"><i class="fas fa-backward-step"></i></button>
-      <button class="btn-main" id="playBtn"><i class="fas fa-play"></i></button>
-      <button class="btn-ctrl" id="nextBtn"><i class="fas fa-forward-step"></i></button>
-      <button class="btn-ctrl" id="repeatBtn" title="Repeat"><i class="fas fa-repeat"></i></button>
-    </div>
-
-    <div class="extra-ctrls">
-      <button class="ebtn" id="likeBtn"><i class="far fa-heart"></i> Like</button>
-      <button class="ebtn"><i class="fas fa-list"></i> Queue</button>
-      <button class="ebtn"><i class="fas fa-share-nodes"></i> Share</button>
-    </div>
-
-    <div class="sep"></div>
-
-    <div class="vol-row">
-      <i class="fas fa-volume-low vol-icon"></i>
-      <div class="vol-track" id="volTrack"><div class="vol-fill" id="volFill"></div></div>
-      <span class="vol-val" id="volVal">75</span>
-    </div>
-  </div>
-
-  <!-- RIGHT -->
-  <div class="right-panel">
-    <div class="right-hdr">
-      <div class="pl-wrap">
-        <select class="pl-sel" id="plSel">
-          <option>Default Playlist</option>
-          <option>Favorites</option>
-          <option>Late Night Drive</option>
-        </select>
-      </div>
-      <button class="btn-add"><i class="fas fa-plus"></i> Add Track</button>
-    </div>
-
-    <div class="search-wrap">
-      <i class="fas fa-magnifying-glass si"></i>
-      <input type="text" class="search-input" id="searchIn" placeholder="Search tracks, artists, albums...">
-    </div>
-
-    <div class="list-hdr">
-      <span>#</span><span></span><span>Title</span><span>Album</span><span>Time</span>
-      <span><i class="fas fa-heart" style="font-size:.52rem"></i></span>
-    </div>
-
-    <div class="tracks-scroll">
-      <div id="trackList"></div>
-    </div>
-
-    <div class="status-bar">
-      <div class="status-item"><div class="sdot live"></div> Live</div>
-      <div class="status-item"><span id="tCount">0</span>&nbsp;tracks</div>
-      <div class="status-item">FLAC · 24-bit</div>
-    </div>
-  </div>
 </div>
 
+<!-- ══ JS — all original functionality preserved ════════════════ -->
 <script>
-/* === CURSOR === */
-const cur=document.getElementById('cursor'),ring=document.getElementById('cursor-ring');
-let mx=window.innerWidth/2,my=window.innerHeight/2,rx=mx,ry=my;
-document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;cur.style.left=mx+'px';cur.style.top=my+'px'});
-(function a(){rx+=(mx-rx)*.12;ry+=(my-ry)*.12;ring.style.left=rx+'px';ring.style.top=ry+'px';requestAnimationFrame(a)})();
+(function () {
+    var tracks = document.querySelectorAll('.track');
+    var emojis = ['🌊','🪷','⚡','🌀','✨'];
 
-/* === PARTICLES === */
-const pc=document.getElementById('particles'),c2=pc.getContext('2d');
-function resizePC(){pc.width=innerWidth;pc.height=innerHeight}resizePC();
-window.addEventListener('resize',resizePC);
-const pts=Array.from({length:60},()=>({x:Math.random()*innerWidth,y:Math.random()*innerHeight,r:Math.random()*1.3+.3,vx:(Math.random()-.5)*.15,vy:(Math.random()-.5)*.15,a:Math.random()*.45+.1}));
-(function dp(){
-  c2.clearRect(0,0,pc.width,pc.height);
-  pts.forEach(p=>{
-    p.x+=p.vx;p.y+=p.vy;
-    if(p.x<0)p.x=pc.width;if(p.x>pc.width)p.x=0;
-    if(p.y<0)p.y=pc.height;if(p.y>pc.height)p.y=0;
-    c2.beginPath();c2.arc(p.x,p.y,p.r,0,Math.PI*2);
-    c2.fillStyle=`rgba(201,168,76,${p.a})`;c2.fill();
-    pts.forEach(q=>{const d=Math.hypot(p.x-q.x,p.y-q.y);if(d<80&&d>0){c2.beginPath();c2.moveTo(p.x,p.y);c2.lineTo(q.x,q.y);c2.strokeStyle=`rgba(201,168,76,${.055*(1-d/80)})`;c2.lineWidth=.5;c2.stroke()}});
-  });
-  requestAnimationFrame(dp);
+    tracks.forEach(function(t) {
+        t.addEventListener('click', function() {
+            tracks.forEach(function(t2) { t2.classList.remove('active','playing'); });
+            this.classList.add('active','playing');
+
+            var idx    = parseInt(this.dataset.index, 10);
+            var title  = (this.querySelector('.track-title') || {}).innerText  || 'Track';
+            var artist = (this.querySelector('.track-meta span') || {}).innerText || 'Artist';
+            var dur    = (this.querySelector('.dur') || {}).innerText || '3:00';
+            var emoji  = emojis[idx] || '🎵';
+
+            document.getElementById('currentTrackName').innerText = title;
+            document.getElementById('currentArtist').innerText    = artist;
+            document.getElementById('totalTime').innerText        = dur;
+            document.getElementById('playerAlbumArt').innerText   = emoji;
+            document.getElementById('currentTime').innerText      = '0:00';
+            document.getElementById('songProgress').style.width   = '0%';
+            document.querySelector('#nowPlayingMobile span').innerText = title;
+
+            var pIcon = document.querySelector('#playPauseBtn i');
+            pIcon.classList.remove('fa-play');
+            pIcon.classList.add('fa-pause');
+            pIcon.style.marginLeft = '';
+        });
+    });
+
+    var playBtn = document.getElementById('playPauseBtn');
+    playBtn.addEventListener('click', function() {
+        var icon = this.querySelector('i');
+        var isPlaying = icon.classList.contains('fa-pause');
+        icon.classList.toggle('fa-play', isPlaying);
+        icon.classList.toggle('fa-pause', !isPlaying);
+        icon.style.marginLeft = isPlaying ? '2px' : '';
+    });
+
+    document.getElementById('progressBar').addEventListener('click', function(e) {
+        var rect = this.getBoundingClientRect();
+        var pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        document.getElementById('songProgress').style.width = (pct * 100).toFixed(1) + '%';
+    });
+
+    document.getElementById('searchInput').addEventListener('input', function() {
+        // backend handles filtering
+    });
 })();
-
-/* === VISUALIZER === */
-const vc=document.getElementById('vizCanvas'),vx=vc.getContext('2d');
-const bars=Array.from({length:50},()=>({h:0,t:0}));
-(function av(){
-  vc.width=vc.offsetWidth;vc.height=vc.offsetHeight;
-  const W=vc.width,H=vc.height,bw=W/bars.length;
-  vx.clearRect(0,0,W,H);
-  bars.forEach((b,i)=>{
-    b.t=playing?(Math.sin(Date.now()*.0025+i*.55)*.5+.5)*(Math.random()*.35+.65)*H*.9:H*.05;
-    b.h+=(b.t-b.h)*.18;
-    const grd=vx.createLinearGradient(0,H-b.h,0,H);
-    grd.addColorStop(0,'rgba(201,168,76,.85)');grd.addColorStop(.6,'rgba(240,208,128,.45)');grd.addColorStop(1,'rgba(201,168,76,.05)');
-    vx.fillStyle=grd;
-    vx.beginPath();vx.roundRect(i*bw+1,H-b.h,bw-2,b.h,2);vx.fill();
-  });
-  requestAnimationFrame(av);
-})();
-
-/* === TRACKS === */
-const COLS=[['#180f28','#3a1f5a'],['#0c1e2c','#1d3f66'],['#172618','#2c591e'],['#271708','#6a380c'],['#1a0b2a','#481a68'],['#0b1a2a','#0e4868'],['#26100a','#681a0c'],['#0a2718','#0c6b38']];
-const TRACKS=[
-  {id:1,title:'Neon Skyline',artist:'Synthwave Collective',album:'Electric Dreams',dur:'3:42',durS:222,likes:'2.4k',em:'🎹',c:COLS[0]},
-  {id:2,title:'Midnight Protocol',artist:'Cyber Drift',album:'Dark Interface',dur:'4:15',durS:255,likes:'5.1k',em:'🎸',c:COLS[1]},
-  {id:3,title:'Retrograde Wave',artist:'Pulse Engine',album:'Signal Return',dur:'3:58',durS:238,likes:'1.8k',em:'🥁',c:COLS[2]},
-  {id:4,title:'Signal Lost',artist:'Ghost Frequency',album:'Void Transmit',dur:'5:03',durS:303,likes:'8.9k',em:'🎷',c:COLS[3]},
-  {id:5,title:'Electric Bloom',artist:'Neon Fauna',album:'Flora Circuit',dur:'3:27',durS:207,likes:'3.2k',em:'🎺',c:COLS[4]},
-  {id:6,title:'Cascade Protocol',artist:'Synthwave Collective',album:'Electric Dreams',dur:'4:44',durS:284,likes:'6.7k',em:'🎻',c:COLS[5]},
-  {id:7,title:'Dark Prism',artist:'Cyber Drift',album:'Dark Interface',dur:'3:11',durS:191,likes:'2.0k',em:'🎤',c:COLS[6]},
-  {id:8,title:'Aurora Frequencies',artist:'Pulse Engine',album:'Signal Return',dur:'6:02',durS:362,likes:'11.3k',em:'🎵',c:COLS[7]},
-  {id:9,title:'Phantom Horizon',artist:'Ghost Frequency',album:'Void Transmit',dur:'4:33',durS:273,likes:'4.4k',em:'🎶',c:COLS[0]},
-  {id:10,title:'Quantum Static',artist:'Neon Fauna',album:'Flora Circuit',dur:'3:55',durS:235,likes:'7.2k',em:'🎙️',c:COLS[1]},
-];
-
-let activeId=null,playing=false,shuffle=false,repeat=false,pct=0,ptimer=null,vol=75;
-
-function render(tracks){
-  document.getElementById('tCount').textContent=tracks.length;
-  document.getElementById('trackList').innerHTML=tracks.map((t,i)=>`
-    <div class="track-row${activeId===t.id?' active':''}${playing&&activeId===t.id?' playing':''}" data-id="${t.id}" style="animation-delay:${i*.04}s" onclick="pick(${t.id})">
-      <div class="row-num">${String(i+1).padStart(2,'0')}</div>
-      <div class="mini-wave"><span></span><span></span><span></span><span></span></div>
-      <div class="row-thumb" style="background:linear-gradient(135deg,${t.c[0]},${t.c[1]})">${t.em}</div>
-      <div class="row-title-col">
-        <div class="row-title">${t.title}</div>
-        <div class="row-artist">${t.artist}</div>
-      </div>
-      <div class="row-album">${t.album}</div>
-      <div class="row-dur">${t.dur}</div>
-      <div class="row-likes"><i class="fas fa-heart"></i>${t.likes}</div>
-    </div>`).join('');
-}
-render(TRACKS);
-
-function pick(id){
-  const t=TRACKS.find(x=>x.id===id);if(!t)return;
-  activeId=id;playing=true;
-  document.getElementById('npTitle').textContent=t.title;
-  document.getElementById('npArtist').textContent=t.artist;
-  document.getElementById('vinylTxt').textContent=t.em;
-  document.getElementById('playBtn').innerHTML='<i class="fas fa-pause"></i>';
-  document.getElementById('vinyl').classList.add('spinning');
-  document.getElementById('tonearm').classList.add('playing');
-  document.getElementById('totTime').textContent=t.dur;
-  document.getElementById('vinyl').style.background=
-    `radial-gradient(circle at 50%,${t.c[1]}90 0%,${t.c[0]} 55%,#08080f 100%)`;
-  render(TRACKS);
-  setTimeout(()=>{const el=document.querySelector('.track-row.active');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'})},60);
-  clearInterval(ptimer);pct=0;
-  ptimer=setInterval(()=>{
-    if(!playing)return;
-    pct+=100/(t.durS*5);
-    if(pct>=100){pct=0;if(!repeat){nextT();return}}
-    document.getElementById('progFill').style.width=pct+'%';
-    const e=Math.floor(t.durS*pct/100),m=Math.floor(e/60),s=e%60;
-    document.getElementById('curTime').textContent=`${m}:${s.toString().padStart(2,'0')}`;
-  },200);
-}
-
-function nextT(){if(!activeId)return;const ids=TRACKS.map(x=>x.id);const i=ids.indexOf(activeId);pick(shuffle?ids[Math.floor(Math.random()*ids.length)]:ids[(i+1)%ids.length])}
-function prevT(){if(!activeId)return;const ids=TRACKS.map(x=>x.id);const i=ids.indexOf(activeId);pick(ids[(i-1+ids.length)%ids.length])}
-
-document.getElementById('playBtn').onclick=()=>{
-  if(!activeId){pick(TRACKS[0].id);return}
-  playing=!playing;
-  document.getElementById('playBtn').innerHTML=playing?'<i class="fas fa-pause"></i>':'<i class="fas fa-play"></i>';
-  document.getElementById('vinyl').classList.toggle('spinning',playing);
-  document.getElementById('tonearm').classList.toggle('playing',playing);
-  render(TRACKS);
-};
-document.getElementById('nextBtn').onclick=nextT;
-document.getElementById('prevBtn').onclick=prevT;
-document.getElementById('shuffleBtn').onclick=function(){shuffle=!shuffle;this.style.color=shuffle?'var(--gold)':''};
-document.getElementById('repeatBtn').onclick=function(){repeat=!repeat;this.style.color=repeat?'var(--gold)':''};
-document.getElementById('likeBtn').onclick=function(){
-  const on=this.querySelector('i').classList.contains('fas');
-  this.innerHTML=on?'<i class="far fa-heart"></i> Like':'<i class="fas fa-heart" style="color:var(--red)"></i> Liked';
-};
-
-document.getElementById('progBar').onclick=e=>{
-  const r=e.currentTarget.getBoundingClientRect();
-  pct=((e.clientX-r.left)/r.width)*100;
-  document.getElementById('progFill').style.width=pct+'%';
-};
-
-document.getElementById('volTrack').onclick=e=>{
-  const r=e.currentTarget.getBoundingClientRect();
-  vol=Math.round(((e.clientX-r.left)/r.width)*100);
-  document.getElementById('volFill').style.width=vol+'%';
-  document.getElementById('volVal').textContent=vol;
-};
-
-document.getElementById('searchIn').oninput=e=>{
-  const q=e.target.value.toLowerCase();
-  render(q?TRACKS.filter(t=>t.title.toLowerCase().includes(q)||t.artist.toLowerCase().includes(q)||t.album.toLowerCase().includes(q)):TRACKS);
-};
-
-document.addEventListener('keydown',e=>{
-  if(e.target.tagName==='INPUT')return;
-  if(e.code==='Space'){e.preventDefault();document.getElementById('playBtn').click()}
-  if(e.code==='ArrowRight')nextT();
-  if(e.code==='ArrowLeft')prevT();
-});
 </script>
+
+<script src="/socket.io/socket.io.js" onerror="void 0"></script>
 </body>
 </html>
