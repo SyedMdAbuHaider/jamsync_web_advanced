@@ -699,7 +699,7 @@
             </div>
             <div class="now-playing-mobile" id="nowPlayingMobile">
                 <i class="fas fa-headphones" style="color:var(--lime);font-size:0.75rem;"></i>
-                <span>Select a track</span>
+                <span>Neural Waves</span>
             </div>
         </div>
     </header>
@@ -730,7 +730,7 @@
             </div>
 
             <div class="tracks-list" id="musicList">
-
+                <!-- track 0: active playing by default (matches old behaviour) -->
                 <div class="track active playing" data-index="0">
                     <div class="track-idx">
                         <div class="track-num">01</div>
@@ -800,7 +800,7 @@
                     <div class="track-info">
                         <div class="track-title">Drift Apart</div>
                         <div class="track-meta">
-                            <span>Kai &amp; Kitsune</span>
+                            <span>Kai & Kitsune</span>
                             <span class="dur">5:02</span>
                         </div>
                     </div>
@@ -825,14 +825,12 @@
                     </div>
                     <div class="track-likes"><i class="fas fa-heart"></i> 277</div>
                 </div>
-
             </div>
         </div>
     </div>
 
     <!-- ══ PLAYER BAR ════════════════════════════════════════════ -->
     <div class="player-bar">
-
         <div class="player-art-slab">
             <div class="player-art" id="playerAlbumArt">🌊</div>
             <div class="player-text">
@@ -847,7 +845,7 @@
                     <i class="fas fa-backward-step"></i>
                 </button>
                 <button class="btn-play-pause" id="playPauseBtn" aria-label="Play / Pause">
-                    <i class="fas fa-play" style="margin-left:2px;"></i>
+                    <i class="fas fa-pause" style="margin-left:0;"></i> <!-- starts as pause because track is playing -->
                 </button>
                 <button class="btn-control" id="nextBtn" aria-label="Next">
                     <i class="fas fa-forward-step"></i>
@@ -857,7 +855,7 @@
             <div class="progress-row">
                 <span class="t-label" id="currentTime">1:17</span>
                 <div class="progress-bar" id="progressBar">
-                    <div class="progress" id="songProgress"></div>
+                    <div class="progress" id="songProgress" style="width:37%"></div>
                 </div>
                 <span class="t-label end" id="totalTime">3:24</span>
             </div>
@@ -868,56 +866,156 @@
 
 </div>
 
-<!-- ══ JS — all original functionality preserved ════════════════ -->
+<!-- ══ FIXED JS — full functionality from old file, adapted to new design ═════ -->
 <script>
-(function () {
-    var tracks = document.querySelectorAll('.track');
-    var emojis = ['🌊','🪷','⚡','🌀','✨'];
+(function() {
+    // DOM elements
+    const tracks = document.querySelectorAll('.track');
+    const playBtn = document.getElementById('playPauseBtn');
+    const playIcon = playBtn.querySelector('i');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const progressBar = document.getElementById('progressBar');
+    const songProgress = document.getElementById('songProgress');
+    const currentTimeEl = document.getElementById('currentTime');
+    const totalTimeEl = document.getElementById('totalTime');
+    const currentTrackNameEl = document.getElementById('currentTrackName');
+    const currentArtistEl = document.getElementById('currentArtist');
+    const playerAlbumArt = document.getElementById('playerAlbumArt');
+    const nowPlayingMobileSpan = document.querySelector('#nowPlayingMobile span');
+    const searchInput = document.getElementById('searchInput');
+    const playlistSelect = document.getElementById('playlistSelect');
+    const addToPlaylistBtn = document.getElementById('addToPlaylist');
 
-    tracks.forEach(function(t) {
-        t.addEventListener('click', function() {
-            tracks.forEach(function(t2) { t2.classList.remove('active','playing'); });
-            this.classList.add('active','playing');
+    // emoji mapping for consistent thumbnails
+    const emojiMap = ['🌊','🪷','⚡','🌀','✨'];
 
-            var idx    = parseInt(this.dataset.index, 10);
-            var title  = (this.querySelector('.track-title') || {}).innerText  || 'Track';
-            var artist = (this.querySelector('.track-meta span') || {}).innerText || 'Artist';
-            var dur    = (this.querySelector('.dur') || {}).innerText || '3:00';
-            var emoji  = emojis[idx] || '🎵';
+    // ---- function to update UI based on selected track ----
+    function setActiveTrack(trackElement) {
+        // remove active/playing from all
+        tracks.forEach(t => {
+            t.classList.remove('active', 'playing');
+        });
+        trackElement.classList.add('active', 'playing');
 
-            document.getElementById('currentTrackName').innerText = title;
-            document.getElementById('currentArtist').innerText    = artist;
-            document.getElementById('totalTime').innerText        = dur;
-            document.getElementById('playerAlbumArt').innerText   = emoji;
-            document.getElementById('currentTime').innerText      = '0:00';
-            document.getElementById('songProgress').style.width   = '0%';
-            document.querySelector('#nowPlayingMobile span').innerText = title;
+        // extract data
+        const idx = trackElement.dataset.index;
+        const title = trackElement.querySelector('.track-title')?.innerText || 'Track';
+        // artist is the first span inside .track-meta (not the duration)
+        const metaSpans = trackElement.querySelectorAll('.track-meta span');
+        const artist = metaSpans.length > 0 ? metaSpans[0].innerText : 'Artist';
+        const dur = trackElement.querySelector('.dur')?.innerText || '3:00';
+        const emoji = emojiMap[idx] || '🎵';
 
-            var pIcon = document.querySelector('#playPauseBtn i');
-            pIcon.classList.remove('fa-play');
-            pIcon.classList.add('fa-pause');
-            pIcon.style.marginLeft = '';
+        // update player bar
+        currentTrackNameEl.innerText = title;
+        currentArtistEl.innerText = artist;
+        totalTimeEl.innerText = dur;
+        playerAlbumArt.innerText = emoji;
+        currentTimeEl.innerText = '0:00';
+        songProgress.style.width = '0%';
+        nowPlayingMobileSpan.innerText = title;
+
+        // ensure play button shows "pause" (since track change assumes playing)
+        playIcon.classList.remove('fa-play');
+        playIcon.classList.add('fa-pause');
+        playIcon.style.marginLeft = ''; // reset play margin if any
+    }
+
+    // ---- click on track ----
+    tracks.forEach(t => {
+        t.addEventListener('click', function(e) {
+            setActiveTrack(this);
         });
     });
 
-    var playBtn = document.getElementById('playPauseBtn');
+    // ---- play/pause toggle ----
     playBtn.addEventListener('click', function() {
-        var icon = this.querySelector('i');
-        var isPlaying = icon.classList.contains('fa-pause');
-        icon.classList.toggle('fa-play', isPlaying);
-        icon.classList.toggle('fa-pause', !isPlaying);
-        icon.style.marginLeft = isPlaying ? '2px' : '';
+        const isPlaying = playIcon.classList.contains('fa-pause');
+        if (isPlaying) {
+            // pause
+            playIcon.classList.remove('fa-pause');
+            playIcon.classList.add('fa-play');
+            playIcon.style.marginLeft = '2px';  // mimic old style for play
+        } else {
+            // play
+            playIcon.classList.remove('fa-play');
+            playIcon.classList.add('fa-pause');
+            playIcon.style.marginLeft = '';
+        }
     });
 
-    document.getElementById('progressBar').addEventListener('click', function(e) {
-        var rect = this.getBoundingClientRect();
-        var pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        document.getElementById('songProgress').style.width = (pct * 100).toFixed(1) + '%';
+    // ---- progress bar click (seek simulation) ----
+    progressBar.addEventListener('click', function(e) {
+        const rect = this.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        songProgress.style.width = (pct * 100).toFixed(1) + '%';
+        // simulate current time update (proportional to total)
+        const totalStr = totalTimeEl.innerText; // "3:24"
+        const totalSec = (() => {
+            const parts = totalStr.split(':');
+            return parseInt(parts[0])*60 + parseInt(parts[1]);
+        })();
+        const newSec = Math.floor(pct * totalSec);
+        const mins = Math.floor(newSec / 60);
+        const secs = newSec % 60;
+        currentTimeEl.innerText = mins + ':' + (secs < 10 ? '0' + secs : secs);
     });
 
-    document.getElementById('searchInput').addEventListener('input', function() {
-        // backend handles filtering
+    // ---- prev / next basic demo (cycle through tracks) ----
+    function getActiveIndex() {
+        let activeTrack = document.querySelector('.track.active');
+        if (!activeTrack) activeTrack = tracks[0];
+        return parseInt(activeTrack.dataset.index);
+    }
+
+    prevBtn.addEventListener('click', function() {
+        let currentIdx = getActiveIndex();
+        let prevIdx = (currentIdx - 1 + tracks.length) % tracks.length;
+        setActiveTrack(tracks[prevIdx]);
     });
+
+    nextBtn.addEventListener('click', function() {
+        let currentIdx = getActiveIndex();
+        let nextIdx = (currentIdx + 1) % tracks.length;
+        setActiveTrack(tracks[nextIdx]);
+    });
+
+    // ---- search dummy (preserved) ----
+    searchInput.addEventListener('input', function() {
+        // backend handles filtering; we keep for compatibility
+    });
+
+    // ---- playlist dropdown & add button dummy ----
+    playlistSelect.addEventListener('change', function() {
+        // placeholder
+    });
+
+    addToPlaylistBtn.addEventListener('click', function() {
+        // placeholder
+    });
+
+    // ---- ensure default playing track matches the one marked in HTML (first track) ----
+    // But our HTML already has .active.playing on first track.
+    // Sync player bar to that first track (in case there's mismatch)
+    const defaultTrack = document.querySelector('.track.active.playing');
+    if (defaultTrack) {
+        const idx = defaultTrack.dataset.index;
+        const title = defaultTrack.querySelector('.track-title')?.innerText || 'Neural Waves';
+        const metaSpans = defaultTrack.querySelectorAll('.track-meta span');
+        const artist = metaSpans.length > 0 ? metaSpans[0].innerText : 'Eliot Stellar';
+        const dur = defaultTrack.querySelector('.dur')?.innerText || '3:24';
+        const emoji = emojiMap[idx] || '🌊';
+
+        currentTrackNameEl.innerText = title;
+        currentArtistEl.innerText = artist;
+        totalTimeEl.innerText = dur;
+        playerAlbumArt.innerText = emoji;
+        nowPlayingMobileSpan.innerText = title;
+        // progress already at 37% from inline style, current time 1:17 — keep as design.
+        // but we want currentTime to be 1:17? we leave it, but ensure totalTime is correct.
+        // however default progress width 37% matches 1:17 of 3:24 (~38%).
+    }
 })();
 </script>
 
