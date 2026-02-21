@@ -994,203 +994,220 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="/js/script.js"></script>
 <script>
 (function() {
-    // ---------- persist volume ----------
-    const volumeSlider = document.getElementById('volumeSlider');
-    const audio = document.getElementById('audioPlayer');
-    const volumeIcon = document.getElementById('volumeIcon');
-    const likeBtn = document.getElementById('likeBtn');
-    const shuffleBtn = document.getElementById('shuffleBtn');
-    const repeatBtn = document.getElementById('repeatBtn');
-    const playPauseBtn = document.getElementById('playPauseBtn');
-    const prevBtn = document.getElementById('prevBtn');
-    const nextBtn = document.getElementById('nextBtn');
-    const progressBar = document.getElementById('progressBar');
-    const songProgress = document.getElementById('songProgress');
-    const currentTimeSpan = document.getElementById('currentTime');
-    const totalTimeSpan = document.getElementById('totalTime');
-    const audioError = document.getElementById('audioError');
-    const playerArt = document.getElementById('playerAlbumArt');
+    'use strict';
+    
+    // Wait for socket to be initialized in script.js
+    const checkSocket = setInterval(() => {
+        if (window.socket) {
+            clearInterval(checkSocket);
+            
+            // Use the existing socket from window
+            const socket = window.socket;
+            
+            // ---------- persist volume ----------
+            const volumeSlider = document.getElementById('volumeSlider');
+            const audio = document.getElementById('audioPlayer');
+            const volumeIcon = document.getElementById('volumeIcon');
+            const likeBtn = document.getElementById('likeBtn');
+            const shuffleBtn = document.getElementById('shuffleBtn');
+            const repeatBtn = document.getElementById('repeatBtn');
+            const playPauseBtn = document.getElementById('playPauseBtn');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            const progressBar = document.getElementById('progressBar');
+            const songProgress = document.getElementById('songProgress');
+            const currentTimeSpan = document.getElementById('currentTime');
+            const totalTimeSpan = document.getElementById('totalTime');
+            const audioError = document.getElementById('audioError');
+            const playerArt = document.getElementById('playerAlbumArt');
+            const livePill = document.getElementById('livePill');
 
-    let savedVolume = localStorage.getItem('jamSync_volume');
-    if (savedVolume !== null) {
-        volumeSlider.value = savedVolume;
-        audio.volume = parseFloat(savedVolume);
-    }
-    volumeSlider.addEventListener('input', (e) => {
-        const val = parseFloat(e.target.value);
-        audio.volume = val;
-        localStorage.setItem('jamSync_volume', val);
-        updateVolumeIcon(val);
-    });
+            let savedVolume = localStorage.getItem('jamSync_volume');
+            if (savedVolume !== null) {
+                volumeSlider.value = savedVolume;
+                audio.volume = parseFloat(savedVolume);
+            }
+            
+            // Override volume slider to also emit socket events if not already handled
+            volumeSlider.addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value);
+                audio.volume = val;
+                localStorage.setItem('jamSync_volume', val);
+                updateVolumeIcon(val);
+                // Only emit if not handled by main script to avoid duplicates
+                if (!window.__volumeHandlerActive) {
+                    socket.emit('volume', val);
+                }
+            });
 
-    function updateVolumeIcon(val) {
-        if (val === 0) volumeIcon.className = 'fas fa-volume-off';
-        else if (val < 0.5) volumeIcon.className = 'fas fa-volume-low';
-        else volumeIcon.className = 'fas fa-volume-high';
-    }
-    updateVolumeIcon(audio.volume);
+            function updateVolumeIcon(val) {
+                if (val === 0) volumeIcon.className = 'fas fa-volume-off';
+                else if (val < 0.5) volumeIcon.className = 'fas fa-volume-low';
+                else volumeIcon.className = 'fas fa-volume-high';
+            }
+            updateVolumeIcon(audio.volume);
 
-    volumeIcon.addEventListener('click', () => {
-        if (audio.volume > 0) {
-            audio.dataset.prevVolume = audio.volume;
-            audio.volume = 0;
-            volumeSlider.value = 0;
-        } else {
-            audio.volume = parseFloat(audio.dataset.prevVolume) || 1;
-            volumeSlider.value = audio.volume;
+            volumeIcon.addEventListener('click', () => {
+                if (audio.volume > 0) {
+                    audio.dataset.prevVolume = audio.volume;
+                    audio.volume = 0;
+                    volumeSlider.value = 0;
+                } else {
+                    audio.volume = parseFloat(audio.dataset.prevVolume) || 1;
+                    volumeSlider.value = audio.volume;
+                }
+                localStorage.setItem('jamSync_volume', audio.volume);
+                updateVolumeIcon(audio.volume);
+                if (!window.__volumeHandlerActive) {
+                    socket.emit('volume', audio.volume);
+                }
+            });
+
+            // ---------- persist liked tracks ----------
+            let likedSet = new Set(JSON.parse(localStorage.getItem('jamSync_liked') || '[]'));
+            function saveLiked() {
+                localStorage.setItem('jamSync_liked', JSON.stringify([...likedSet]));
+            }
+
+            // initial like button state
+            if (likeBtn) {
+                likeBtn.setAttribute('aria-pressed', 'false');
+                likeBtn.innerHTML = '<i class="far fa-heart"></i>';
+            }
+
+            // to be called by main app when track changes
+            window.__updateLikeUI = function(trackId, isLiked) {
+                if (isLiked) {
+                    likeBtn.setAttribute('aria-pressed', 'true');
+                    likeBtn.innerHTML = '<i class="fas fa-heart"></i>';
+                } else {
+                    likeBtn.setAttribute('aria-pressed', 'false');
+                    likeBtn.innerHTML = '<i class="far fa-heart"></i>';
+                }
+            };
+
+            likeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const pressed = likeBtn.getAttribute('aria-pressed') === 'true';
+                const newPressed = !pressed;
+                likeBtn.setAttribute('aria-pressed', newPressed);
+                likeBtn.innerHTML = newPressed ? '<i class="fas fa-heart"></i>' : '<i class="far fa-heart"></i>';
+                // actual track id logic should be integrated with main app; we store dummy id for demo
+                // but to keep localstorage persistent we maintain a dummy current track id
+                const currentId = window.__currentTrackId || 'demo-track';
+                if (newPressed) likedSet.add(currentId);
+                else likedSet.delete(currentId);
+                saveLiked();
+            });
+
+            // ---------- error handling UI ----------
+            window.__showError = function(msg, show = true) {
+                if (!audioError) return;
+                if (!show || !msg) {
+                    audioError.style.display = 'none';
+                    return;
+                }
+                audioError.style.display = 'inline-flex';
+                audioError.innerHTML = `<i class="fas fa-circle-exclamation" style="font-size:0.7rem;"></i> ${msg}`;
+            };
+
+            // ---------- drag to seek ----------
+            let isDragging = false;
+            function handleSeek(e) {
+                if (!audio.duration) return;
+                const rect = progressBar.getBoundingClientRect();
+                let offsetX = e.clientX - rect.left;
+                if (offsetX < 0) offsetX = 0;
+                if (offsetX > rect.width) offsetX = rect.width;
+                const percent = offsetX / rect.width;
+                audio.currentTime = percent * audio.duration;
+                songProgress.style.width = percent * 100 + '%';
+            }
+
+            progressBar.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                isDragging = true;
+                progressBar.classList.add('dragging');
+                handleSeek(e);
+            });
+            window.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                e.preventDefault();
+                handleSeek(e);
+            });
+            window.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    progressBar.classList.remove('dragging');
+                }
+            });
+            // mobile touch
+            progressBar.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                isDragging = true;
+                progressBar.classList.add('dragging');
+                handleSeek(e.touches[0]);
+            });
+            window.addEventListener('touchmove', (e) => {
+                if (!isDragging) return;
+                e.preventDefault();
+                handleSeek(e.touches[0]);
+            });
+            window.addEventListener('touchend', () => {
+                isDragging = false;
+                progressBar.classList.remove('dragging');
+            });
+
+            // ---------- keyboard shortcuts ----------
+            document.addEventListener('keydown', (e) => {
+                if (e.target.matches('input, select, textarea')) return;
+                switch(e.key) {
+                    case ' ': e.preventDefault(); playPauseBtn.click(); break;
+                    case 'ArrowRight': e.preventDefault(); nextBtn.click(); break;
+                    case 'ArrowLeft': e.preventDefault(); prevBtn.click(); break;
+                    case 'm':
+                    case 'M': e.preventDefault(); volumeIcon.click(); break;
+                }
+            });
+
+            // ---------- reconnect indicator ----------
+            let reconnectIndicator = null;
+            socket.on('disconnect', () => {
+                if (!reconnectIndicator) {
+                    reconnectIndicator = document.createElement('span');
+                    reconnectIndicator.className = 'reconnect-indicator';
+                    reconnectIndicator.innerHTML = '<i class="fas fa-wifi"></i> reconnecting...';
+                    livePill.parentNode.insertBefore(reconnectIndicator, livePill.nextSibling);
+                }
+            });
+            socket.on('connect', () => {
+                if (reconnectIndicator) {
+                    reconnectIndicator.remove();
+                    reconnectIndicator = null;
+                }
+            });
+
+            // ---------- playing glow ----------
+            audio.addEventListener('play', () => {
+                playerArt.classList.add('playing-glow');
+            });
+            audio.addEventListener('pause', () => {
+                playerArt.classList.remove('playing-glow');
+            });
+            audio.addEventListener('ended', () => {
+                playerArt.classList.remove('playing-glow');
+            });
+
+            // ---------- inject into global for main app ----------
+            window.__likedSet = likedSet;
+            window.__saveLiked = saveLiked;
+            window.__updateVolumeIcon = updateVolumeIcon;
         }
-        localStorage.setItem('jamSync_volume', audio.volume);
-        updateVolumeIcon(audio.volume);
-    });
-
-    // ---------- persist liked tracks ----------
-    let likedSet = new Set(JSON.parse(localStorage.getItem('jamSync_liked') || '[]'));
-    function saveLiked() {
-        localStorage.setItem('jamSync_liked', JSON.stringify([...likedSet]));
-    }
-
-    // initial like button state
-    if (likeBtn) {
-        likeBtn.setAttribute('aria-pressed', 'false');
-        likeBtn.innerHTML = '<i class="far fa-heart"></i>';
-    }
-
-    // to be called by main app when track changes
-    window.__updateLikeUI = function(trackId, isLiked) {
-        if (isLiked) {
-            likeBtn.setAttribute('aria-pressed', 'true');
-            likeBtn.innerHTML = '<i class="fas fa-heart"></i>';
-        } else {
-            likeBtn.setAttribute('aria-pressed', 'false');
-            likeBtn.innerHTML = '<i class="far fa-heart"></i>';
-        }
-    };
-
-    likeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const pressed = likeBtn.getAttribute('aria-pressed') === 'true';
-        const newPressed = !pressed;
-        likeBtn.setAttribute('aria-pressed', newPressed);
-        likeBtn.innerHTML = newPressed ? '<i class="fas fa-heart"></i>' : '<i class="far fa-heart"></i>';
-        // actual track id logic should be integrated with main app; we store dummy id for demo
-        // but to keep localstorage persistent we maintain a dummy current track id
-        const currentId = window.__currentTrackId || 'demo-track';
-        if (newPressed) likedSet.add(currentId);
-        else likedSet.delete(currentId);
-        saveLiked();
-    });
-
-    // ---------- error handling UI ----------
-    window.__showError = function(msg, show = true) {
-        if (!audioError) return;
-        if (!show || !msg) {
-            audioError.style.display = 'none';
-            return;
-        }
-        audioError.style.display = 'inline-flex';
-        audioError.innerHTML = `<i class="fas fa-circle-exclamation" style="font-size:0.7rem;"></i> ${msg}`;
-    };
-
-    // ---------- drag to seek ----------
-    let isDragging = false;
-    function handleSeek(e) {
-        if (!audio.duration) return;
-        const rect = progressBar.getBoundingClientRect();
-        let offsetX = e.clientX - rect.left;
-        if (offsetX < 0) offsetX = 0;
-        if (offsetX > rect.width) offsetX = rect.width;
-        const percent = offsetX / rect.width;
-        audio.currentTime = percent * audio.duration;
-        songProgress.style.width = percent * 100 + '%';
-    }
-
-    progressBar.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        isDragging = true;
-        progressBar.classList.add('dragging');
-        handleSeek(e);
-    });
-    window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        e.preventDefault();
-        handleSeek(e);
-    });
-    window.addEventListener('mouseup', () => {
-        if (isDragging) {
-            isDragging = false;
-            progressBar.classList.remove('dragging');
-        }
-    });
-    // mobile touch
-    progressBar.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        isDragging = true;
-        progressBar.classList.add('dragging');
-        handleSeek(e.touches[0]);
-    });
-    window.addEventListener('touchmove', (e) => {
-        if (!isDragging) return;
-        e.preventDefault();
-        handleSeek(e.touches[0]);
-    });
-    window.addEventListener('touchend', () => {
-        isDragging = false;
-        progressBar.classList.remove('dragging');
-    });
-
-    // ---------- keyboard shortcuts ----------
-    document.addEventListener('keydown', (e) => {
-        if (e.target.matches('input, select, textarea')) return;
-        switch(e.key) {
-            case ' ': e.preventDefault(); playPauseBtn.click(); break;
-            case 'ArrowRight': e.preventDefault(); nextBtn.click(); break;
-            case 'ArrowLeft': e.preventDefault(); prevBtn.click(); break;
-            case 'm':
-            case 'M': e.preventDefault(); volumeIcon.click(); break;
-        }
-    });
-
-    // ---------- reconnect indicator ----------
-    const livePill = document.getElementById('livePill');
-    let reconnectIndicator = null;
-    const socket = io(); // assuming socket already exists
-    socket.on('disconnect', () => {
-        if (!reconnectIndicator) {
-            reconnectIndicator = document.createElement('span');
-            reconnectIndicator.className = 'reconnect-indicator';
-            reconnectIndicator.innerHTML = '<i class="fas fa-wifi"></i> reconnecting...';
-            livePill.parentNode.insertBefore(reconnectIndicator, livePill.nextSibling);
-        }
-    });
-    socket.on('connect', () => {
-        if (reconnectIndicator) {
-            reconnectIndicator.remove();
-            reconnectIndicator = null;
-        }
-    });
-
-    // ---------- playing glow ----------
-    audio.addEventListener('play', () => {
-        playerArt.classList.add('playing-glow');
-    });
-    audio.addEventListener('pause', () => {
-        playerArt.classList.remove('playing-glow');
-    });
-    audio.addEventListener('ended', () => {
-        playerArt.classList.remove('playing-glow');
-    });
-
-    // ---------- volume slider consistency & aria sync ----------
-    // (already 0-1 matches)
-
-    // ---------- inject into global for main app ----------
-    window.__likedSet = likedSet;
-    window.__saveLiked = saveLiked;
-    window.__updateVolumeIcon = updateVolumeIcon;
+    }, 50);
 })();
 </script>
-<script src="/js/script.js"></script>
 </body>
 </html>
