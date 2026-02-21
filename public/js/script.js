@@ -1,4 +1,5 @@
 const socket = io();
+window.socket = socket;
 
 // ============================================================================
 // CORE STATE MANAGEMENT (Ready for module separation)
