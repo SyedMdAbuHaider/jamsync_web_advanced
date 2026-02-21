@@ -20,7 +20,15 @@ let playlists = {};
 
 // Initialize
 socket.on('init', ({ tracks: serverTracks, playlists: serverPlaylists, currentState }) => {
-  tracks = serverTracks;
+  // Ensure each track has required fields for display
+  tracks = serverTracks.map(track => ({
+    ...track,
+    artist: track.artist || 'JamSync Artist',
+    albumArt: track.albumArt || getRandomAlbumArt(),
+    likes: track.likes || Math.floor(Math.random() * 500) + 100,
+    duration: track.duration || 180 // Default 3 minutes if not provided
+  }));
+  
   filteredTracks = [...tracks];
   playlists = serverPlaylists;
   renderTrackList(filteredTracks);
@@ -30,6 +38,12 @@ socket.on('init', ({ tracks: serverTracks, playlists: serverPlaylists, currentSt
     loadTrack(currentState.currentTrack, currentState.position, currentState.isPlaying);
   }
 });
+
+// Helper function to get random album art emoji
+function getRandomAlbumArt() {
+  const emojis = ['🎸', '🎹', '🥁', '🎷', '🎺', '🎻', '🎤', '🎧', '💿', '📀', '🎵', '🎶'];
+  return emojis[Math.floor(Math.random() * emojis.length)];
+}
 
 // Update playlist dropdown
 function updatePlaylistDropdown() {
@@ -49,7 +63,6 @@ function loadTrack(track, position = 0, shouldPlay = false) {
   
   // Immediate UI update
   updateUI();
-  renderTrackList(filteredTracks);
   
   audioPlayer.onloadedmetadata = () => {
     socket.emit('duration', {
@@ -64,7 +77,7 @@ function loadTrack(track, position = 0, shouldPlay = false) {
       audioPlayer.play()
         .then(() => {
           updatePlayState(true);
-          document.querySelector(`.track[data-id="${track.id}"]`)?.classList.add('playing');
+          renderTrackList(filteredTracks);
         })
         .catch(e => console.log("Play error:", e));
     }
@@ -79,18 +92,19 @@ searchInput.addEventListener('input', (e) => {
     filteredTracks = [...tracks];
   } else {
     filteredTracks = tracks.filter(track => 
-      track.name.toLowerCase().includes(searchTerm)
+      track.name.toLowerCase().includes(searchTerm) ||
+      (track.artist && track.artist.toLowerCase().includes(searchTerm))
     );
   }
   
   renderTrackList(filteredTracks);
 });
 
-// Track list rendering (updated for better highlighting)
+// Track list rendering (UPDATED to match HTML/CSS structure)
 function renderTrackList(trackList) {
   musicList.innerHTML = '';
   
-  trackList.forEach(track => {
+  trackList.forEach((track, index) => {
     const trackEl = document.createElement('div');
     trackEl.className = 'track';
     if (currentTrack?.id === track.id) {
@@ -100,17 +114,40 @@ function renderTrackList(trackList) {
       }
     }
     trackEl.dataset.id = track.id;
+    
+    // Create the full track structure matching your HTML/CSS
     trackEl.innerHTML = `
+      <div class="track-idx">
+        <span class="track-num">${index + 1}</span>
+        <div class="track-wave">
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+        </div>
+      </div>
+      <div class="track-thumb">${track.albumArt || '🎵'}</div>
       <div class="track-info">
         <div class="track-title">${track.name}</div>
         <div class="track-meta">
-          <span class="track-duration">${track.duration ? formatTime(track.duration) : '--:--'}</span>
-          <span class="track-likes"><i class="far fa-heart"></i> 0</span>
+          <span>${track.artist || 'Unknown Artist'}</span>
+          <span class="dur">${track.duration ? formatTime(track.duration) : '--:--'}</span>
         </div>
       </div>
+      <div class="track-likes">
+        <i class="fa-regular fa-heart"></i>
+        <span>${track.likes || 0}</span>
+      </div>
     `;
+    
     musicList.appendChild(trackEl);
   });
+  
+  // Update track count
+  const trackCountEl = document.getElementById('trackCount');
+  if (trackCountEl) {
+    trackCountEl.textContent = trackList.length;
+  }
 }
 
 // Track click handler (updated for immediate response)
@@ -159,7 +196,7 @@ socket.on('pause', ({ position }) => {
   audioPlayer.currentTime = position;
   audioPlayer.pause();
   updatePlayState(false);
-  document.querySelector('.track.playing')?.classList.remove('playing');
+  renderTrackList(filteredTracks);
 });
 
 socket.on('seek', ({ position }) => {
@@ -178,20 +215,27 @@ socket.on('sync', ({ position, isPlaying }) => {
     audioPlayer.play()
       .then(() => {
         updatePlayState(true);
-        if (currentTrack) {
-          document.querySelector(`.track[data-id="${currentTrack.id}"]`)?.classList.add('playing');
-        }
+        renderTrackList(filteredTracks);
       })
       .catch(e => console.log("Sync play error:", e));
   } else if (!isPlaying && !audioPlayer.paused) {
     audioPlayer.pause();
     updatePlayState(false);
-    document.querySelector('.track.playing')?.classList.remove('playing');
+    renderTrackList(filteredTracks);
   }
 });
 
 // Player controls
 playPauseBtn.addEventListener('click', () => {
+  if (!currentTrack) {
+    // If no track selected, play the first one
+    if (tracks.length > 0) {
+      const firstTrack = tracks[0];
+      socket.emit('play', { trackId: firstTrack.id });
+    }
+    return;
+  }
+  
   isUserInteracting = true;
   
   if (audioPlayer.paused) {
@@ -199,16 +243,14 @@ playPauseBtn.addEventListener('click', () => {
     audioPlayer.play()
       .then(() => {
         updatePlayState(true);
-        if (currentTrack) {
-          document.querySelector(`.track[data-id="${currentTrack.id}"]`)?.classList.add('playing');
-        }
+        renderTrackList(filteredTracks);
       })
       .catch(e => console.log("Play error:", e));
   } else {
     socket.emit('pause');
     audioPlayer.pause();
     updatePlayState(false);
-    document.querySelector('.track.playing')?.classList.remove('playing');
+    renderTrackList(filteredTracks);
   }
   
   setTimeout(() => isUserInteracting = false, 500);
@@ -228,20 +270,44 @@ prevBtn.addEventListener('click', () => {
 
 // UI updates
 function updatePlayState(isPlaying) {
-  playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
+  playPauseBtn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play" style="margin-left:2px;"></i>';
 }
 
 function updateUI() {
   if (currentTrack) {
     document.getElementById('currentTrackName').textContent = currentTrack.name;
-    document.getElementById('currentArtist').textContent = 'JamSync';
-    document.getElementById('nowPlayingMobile').textContent = currentTrack.name;
+    document.getElementById('currentArtist').textContent = currentTrack.artist || 'JamSync';
+    
+    // Update mobile now playing
+    const mobileSpan = document.querySelector('#nowPlayingMobile span');
+    if (mobileSpan) {
+      mobileSpan.textContent = currentTrack.name;
+    }
+    
+    // Update player album art
+    const playerArt = document.getElementById('playerAlbumArt');
+    if (playerArt) {
+      playerArt.textContent = currentTrack.albumArt || '🎵';
+    }
+  } else {
+    document.getElementById('currentTrackName').textContent = 'Not Playing';
+    document.getElementById('currentArtist').textContent = 'Select a track';
+    
+    const mobileSpan = document.querySelector('#nowPlayingMobile span');
+    if (mobileSpan) {
+      mobileSpan.textContent = 'Select a track';
+    }
+    
+    const playerArt = document.getElementById('playerAlbumArt');
+    if (playerArt) {
+      playerArt.textContent = '🎵';
+    }
   }
-  renderTrackList(filteredTracks);
 }
 
 // Helper function
 function formatTime(seconds) {
+  if (!seconds || isNaN(seconds)) return '0:00';
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
@@ -255,41 +321,87 @@ audioPlayer.addEventListener('timeupdate', () => {
 });
 
 audioPlayer.addEventListener('play', () => {
-  if (currentTrack) {
-    document.querySelector(`.track[data-id="${currentTrack.id}"]`)?.classList.add('playing');
-  }
+  updatePlayState(true);
+  renderTrackList(filteredTracks);
 });
 
 audioPlayer.addEventListener('pause', () => {
-  document.querySelector('.track.playing')?.classList.remove('playing');
+  updatePlayState(false);
+  renderTrackList(filteredTracks);
 });
 
 audioPlayer.addEventListener('ended', () => {
-  document.querySelector('.track.playing')?.classList.remove('playing');
+  renderTrackList(filteredTracks);
   socket.emit('track-ended');
 });
 
-progressBar.parentElement.addEventListener('click', (e) => {
-  if (!currentTrack) return;
-  
-  const percent = e.offsetX / e.target.clientWidth;
-  const seekTime = percent * audioPlayer.duration;
-  
-  isUserInteracting = true;
-  const wasPlaying = !audioPlayer.paused;
-  
-  if (wasPlaying) {
-    audioPlayer.pause();
-  }
-  
-  audioPlayer.currentTime = seekTime;
-  
-  socket.emit('seek', { position: seekTime });
-  
-  setTimeout(() => {
-    isUserInteracting = false;
+// Progress bar click handler
+const progressContainer = document.querySelector('.progress-bar');
+if (progressContainer) {
+  progressContainer.addEventListener('click', (e) => {
+    if (!currentTrack || !audioPlayer.duration) return;
+    
+    const rect = e.target.closest('.progress-bar').getBoundingClientRect();
+    const percent = (e.clientX - rect.left) / rect.width;
+    const seekTime = percent * audioPlayer.duration;
+    
+    isUserInteracting = true;
+    const wasPlaying = !audioPlayer.paused;
+    
     if (wasPlaying) {
-      audioPlayer.play().catch(e => console.log("Play error:", e));
+      audioPlayer.pause();
     }
-  }, 500);
+    
+    audioPlayer.currentTime = seekTime;
+    
+    socket.emit('seek', { position: seekTime });
+    
+    setTimeout(() => {
+      isUserInteracting = false;
+      if (wasPlaying) {
+        audioPlayer.play().catch(e => console.log("Play error:", e));
+      }
+    }, 500);
+  });
+}
+
+// Add some sample data if server doesn't send any (for development)
+window.addEventListener('load', () => {
+  // If no tracks after 2 seconds, load sample data (for testing)
+  setTimeout(() => {
+    if (tracks.length === 0) {
+      console.log('No tracks received from server, loading sample data');
+      tracks = [
+        {
+          id: '1',
+          name: 'Bohemian Rhapsody',
+          artist: 'Queen',
+          url: '/audio/bohemian-rhapsody.mp3',
+          duration: 355,
+          albumArt: '🎸',
+          likes: 1234
+        },
+        {
+          id: '2',
+          name: 'Stairway to Heaven',
+          artist: 'Led Zeppelin',
+          url: '/audio/stairway-to-heaven.mp3',
+          duration: 482,
+          albumArt: '🎸',
+          likes: 987
+        },
+        {
+          id: '3',
+          name: 'Imagine',
+          artist: 'John Lennon',
+          url: '/audio/imagine.mp3',
+          duration: 183,
+          albumArt: '🎹',
+          likes: 756
+        }
+      ];
+      filteredTracks = [...tracks];
+      renderTrackList(filteredTracks);
+    }
+  }, 2000);
 });
