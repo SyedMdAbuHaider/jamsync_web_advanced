@@ -41,7 +41,7 @@ socket.on('init', ({ tracks: serverTracks, playlists: serverPlaylists, currentSt
 
 // Helper function to get random album art emoji
 function getRandomAlbumArt() {
-  const emojis = ['🎸', '🎹', '🥁', '🎷', '🎺', '🎻', '🎤', '🎧', '💿', '📀', '🎵', '🎶'];
+  const emojis = ['📀'];
   return emojis[Math.floor(Math.random() * emojis.length)];
 }
 
