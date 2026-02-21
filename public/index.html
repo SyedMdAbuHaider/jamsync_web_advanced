@@ -71,6 +71,7 @@
             display: flex;
             flex-direction: column;
             box-shadow: 0 40px 90px -20px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.07);
+            contain: layout paint;
         }
 
         header {
@@ -83,6 +84,7 @@
             backdrop-filter: blur(20px);
             flex-shrink: 0;
             position: relative;
+            contain: layout paint;
         }
 
         header::before {
@@ -126,7 +128,7 @@
             color: var(--lime);
         }
 
-        .header-right { display: flex; align-items: center; gap: 12px; }
+        .header-right { display: flex; align-items: center; gap: 12px; position: relative; }
 
         .live-pill {
             display: flex;
@@ -140,6 +142,7 @@
             font-size: 0.68rem;
             color: var(--lime);
             letter-spacing: 0.05em;
+            transition: opacity 0.2s;
         }
 
         .live-dot {
@@ -178,6 +181,7 @@
             padding: 22px 28px 10px;
             scrollbar-width: thin;
             scrollbar-color: var(--ink4) transparent;
+            contain: paint;
         }
 
         .main-content::-webkit-scrollbar { width: 3px; }
@@ -304,10 +308,6 @@
 
         .track {
             display: grid;
-            /* CRITICAL FIX: Likes column moves to its own line on small/med screens? No — we give info max space.
-               We set likes to auto minimum, but if title is extremely long, likes might be squeezed.
-               Solution: move likes to a separate line using media query when space insufficient.
-               But main fix: allow track-info to take remaining space without competition. */
             grid-template-columns: 28px 52px minmax(0, 1fr) auto;
             align-items: center;
             gap: 14px;
@@ -319,7 +319,13 @@
             position: relative;
         }
 
-        /* On smaller viewports (below 700px) move likes below title to free horizontal space */
+        .track:hover {
+            background: var(--ink3);
+            border-color: var(--line);
+            transform: scale(1.004);
+            box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+        }
+
         @media (max-width: 700px) {
             .track {
                 grid-template-columns: 28px 52px minmax(0, 1fr);
@@ -327,7 +333,7 @@
                 row-gap: 8px;
             }
             .track-likes {
-                grid-column: 3 / 4; /* place in same column as info, but new row */
+                grid-column: 3 / 4;
                 grid-row: 2;
                 justify-self: start;
                 margin-left: 0; 
@@ -345,7 +351,6 @@
             }
         }
 
-        /* On very narrow (below 480) adjust further */
         @media (max-width: 480px) {
             .track {
                 grid-template-columns: 24px 44px minmax(0, 1fr);
@@ -359,7 +364,6 @@
             }
         }
 
-        /* Even narrower */
         @media (max-width: 380px) {
             .track {
                 grid-template-columns: 20px 38px minmax(0, 1fr);
@@ -371,11 +375,6 @@
                 padding: 2px 6px; 
                 font-size: 0.6rem;
             }
-        }
-
-        .track:hover {
-            background: var(--ink3);
-            border-color: var(--line);
         }
 
         .track.active {
@@ -525,6 +524,7 @@
             display: flex;
             align-items: stretch;
             min-height: 86px;
+            gap: 16px;
         }
 
         .player-art-slab {
@@ -534,7 +534,7 @@
             gap: 14px;
             flex-shrink: 0;
             border-right: 1px solid var(--line);
-            margin-right: 20px;
+            margin-right: 0;
             max-width: 250px;
         }
 
@@ -550,6 +550,17 @@
             flex-shrink: 0;
             border: 1px solid rgba(200,245,60,0.2);
             box-shadow: 0 0 20px -6px rgba(200,245,60,0.4);
+            transition: box-shadow 0.3s ease, border-color 0.3s ease;
+        }
+        .player-art.playing-glow {
+            border-color: var(--lime);
+            box-shadow: 0 0 22px 4px rgba(200,245,60,0.5);
+            animation: subtle-pulse 2s infinite;
+        }
+        @keyframes subtle-pulse {
+            0% { box-shadow: 0 0 18px 2px rgba(200,245,60,0.4); }
+            50% { box-shadow: 0 0 26px 6px rgba(200,245,60,0.65); }
+            100% { box-shadow: 0 0 18px 2px rgba(200,245,60,0.4); }
         }
 
         .player-text { 
@@ -592,7 +603,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 20px;
+            gap: 24px;
         }
 
         .btn-control {
@@ -601,22 +612,25 @@
             color: var(--muted);
             font-size: 1rem;
             cursor: pointer;
-            padding: 8px;
-            border-radius: 8px;
+            padding: 10px;
+            border-radius: 10px;
             transition: 0.18s;
             display: flex;
             align-items: center;
             justify-content: center;
+            width: 40px;
+            height: 40px;
         }
 
         .btn-control:hover {
             color: var(--white);
             background: var(--ink3);
+            transform: scale(1.05);
         }
 
         .btn-play-pause {
-            width: 46px;
-            height: 46px;
+            width: 48px;
+            height: 48px;
             border-radius: 50%;
             border: none;
             background: var(--lime);
@@ -636,17 +650,147 @@
             box-shadow: 0 6px 26px -2px rgba(200,245,60,0.75);
         }
 
+        .player-extra {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-shrink: 0;
+            padding-left: 16px;
+            border-left: 1px solid var(--line);
+            margin-left: 8px;
+        }
+
+        .volume-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #volumeIcon {
+            color: var(--muted);
+            font-size: 1rem;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            transition: 0.18s;
+            cursor: pointer;
+        }
+
+        #volumeIcon:hover {
+            color: var(--white);
+            background: var(--ink3);
+        }
+
+        #volumeSlider {
+            width: 80px;
+            height: 3px;
+            background: var(--ink3);
+            border-radius: 10px;
+            appearance: none;
+            outline: none;
+            transition: height 0.15s;
+        }
+        #volumeSlider::-webkit-slider-thumb {
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: var(--white);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--lime);
+            cursor: pointer;
+            transition: 0.1s;
+        }
+        #volumeSlider::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            background: var(--white);
+            border-radius: 50%;
+            border: none;
+            box-shadow: 0 0 8px var(--lime);
+            cursor: pointer;
+        }
+        #volumeSlider:hover {
+            height: 5px;
+            background: var(--ink4);
+        }
+
+        #shuffleBtn, #repeatBtn, #likeBtn {
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 10px;
+            border-radius: 10px;
+            transition: 0.18s;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #shuffleBtn:hover, #repeatBtn:hover, #likeBtn:hover {
+            color: var(--white);
+            background: var(--ink3);
+            transform: scale(1.05);
+        }
+
+        #shuffleBtn[aria-pressed="true"], 
+        #repeatBtn[aria-pressed="true"] {
+            color: var(--lime);
+            background: var(--lime-soft);
+            border: 1px solid rgba(200,245,60,0.2);
+        }
+
+        #likeBtn[aria-pressed="true"] {
+            color: #ff5f6d;
+            background: rgba(255, 95, 109, 0.1);
+            border: 1px solid rgba(255, 95, 109, 0.25);
+        }
+
+        #audioError {
+            color: #ff5f6d;
+            font-size: 0.75rem;
+            font-family: 'Space Mono', monospace;
+            background: rgba(255, 80, 100, 0.08);
+            border: 1px solid rgba(255, 80, 100, 0.2);
+            border-radius: 40px;
+            padding: 4px 12px;
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: 8px;
+            transition: opacity 0.2s ease-in-out;
+            opacity: 1;
+        }
+        #audioError[style*="display: none"] { opacity: 0; }
+        .reconnect-indicator {
+            font-size: 0.7rem;
+            background: var(--ink4);
+            border-radius: 40px;
+            padding: 4px 12px 4px 8px;
+            color: #ffaa5f;
+            border: 1px solid #ffaa5f40;
+            margin-left: 8px;
+            white-space: nowrap;
+        }
+
         .progress-row {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
         }
 
         .t-label {
             font-family: 'Space Mono', monospace;
             font-size: 0.67rem;
             color: var(--dimmer);
-            min-width: 30px;
+            min-width: 36px;
             flex-shrink: 0;
         }
 
@@ -654,15 +798,19 @@
 
         .progress-bar {
             flex: 1;
-            height: 3px;
+            height: 4px;
             background: var(--ink3);
             border-radius: 10px;
             cursor: pointer;
             transition: height 0.15s;
             position: relative;
+            padding: 6px 0;
+            background-clip: content-box;
+            touch-action: none;
         }
+        .progress-bar.dragging { height: 8px; }
 
-        .progress-bar:hover { height: 5px; }
+        .progress-bar:hover { height: 8px; }
 
         .progress {
             height: 100%;
@@ -671,6 +819,7 @@
             border-radius: 10px;
             position: relative;
             transition: width 0.1s;
+            pointer-events: none;
         }
 
         .progress::after {
@@ -701,7 +850,7 @@
                 flex-direction: column;
                 min-height: unset;
                 padding: 14px 18px 18px;
-                gap: 10px;
+                gap: 14px;
             }
 
             .player-art-slab {
@@ -719,6 +868,26 @@
             header h1 { font-size: 1.6rem; }
             .main-content { padding: 16px 16px 8px; }
             .app-container { border-radius: 20px; height: 98vh; }
+
+            .player-extra {
+                border-left: none;
+                border-top: 1px solid var(--line);
+                margin-left: 0;
+                padding-left: 0;
+                padding-top: 12px;
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+            #audioError {
+                margin-left: 0;
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        button:focus-visible, input:focus-visible, select:focus-visible {
+            outline: 2px solid var(--lime);
+            outline-offset: 2px;
         }
     </style>
 </head>
@@ -731,7 +900,7 @@
             <h1>JAM<em>SYNC</em></h1>
         </div>
         <div class="header-right">
-            <div class="live-pill">
+            <div class="live-pill" id="livePill">
                 <span class="live-dot"></span>
                 LIVE SYNC
             </div>
@@ -791,6 +960,16 @@
                 <button class="btn-control" id="nextBtn" aria-label="Next">
                     <i class="fas fa-forward-step"></i>
                 </button>
+
+                <button class="btn-control" id="shuffleBtn" aria-label="Shuffle" aria-pressed="false">
+                    <i class="fas fa-shuffle"></i>
+                </button>
+                <button class="btn-control" id="repeatBtn" aria-label="Repeat" aria-pressed="false">
+                    <i class="fas fa-repeat"></i>
+                </button>
+                <button class="btn-control" id="likeBtn" aria-label="Like" aria-pressed="false">
+                    <i class="far fa-heart"></i>
+                </button>
             </div>
 
             <div class="progress-row">
@@ -802,11 +981,216 @@
             </div>
         </div>
 
+        <div class="player-extra">
+            <div class="volume-control">
+                <i class="fas fa-volume-high" id="volumeIcon" role="button" tabindex="0" aria-label="Volume"></i>
+                <input type="range" id="volumeSlider" min="0" max="1" step="0.01" value="1" aria-label="Volume slider">
+            </div>
+            <span id="audioError" class="audio-error" role="alert" aria-live="polite" style="display: none;"></span>
+        </div>
+
         <audio id="audioPlayer"></audio>
     </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+<script>
+(function() {
+    // ---------- persist volume ----------
+    const volumeSlider = document.getElementById('volumeSlider');
+    const audio = document.getElementById('audioPlayer');
+    const volumeIcon = document.getElementById('volumeIcon');
+    const likeBtn = document.getElementById('likeBtn');
+    const shuffleBtn = document.getElementById('shuffleBtn');
+    const repeatBtn = document.getElementById('repeatBtn');
+    const playPauseBtn = document.getElementById('playPauseBtn');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const progressBar = document.getElementById('progressBar');
+    const songProgress = document.getElementById('songProgress');
+    const currentTimeSpan = document.getElementById('currentTime');
+    const totalTimeSpan = document.getElementById('totalTime');
+    const audioError = document.getElementById('audioError');
+    const playerArt = document.getElementById('playerAlbumArt');
+
+    let savedVolume = localStorage.getItem('jamSync_volume');
+    if (savedVolume !== null) {
+        volumeSlider.value = savedVolume;
+        audio.volume = parseFloat(savedVolume);
+    }
+    volumeSlider.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        audio.volume = val;
+        localStorage.setItem('jamSync_volume', val);
+        updateVolumeIcon(val);
+    });
+
+    function updateVolumeIcon(val) {
+        if (val === 0) volumeIcon.className = 'fas fa-volume-off';
+        else if (val < 0.5) volumeIcon.className = 'fas fa-volume-low';
+        else volumeIcon.className = 'fas fa-volume-high';
+    }
+    updateVolumeIcon(audio.volume);
+
+    volumeIcon.addEventListener('click', () => {
+        if (audio.volume > 0) {
+            audio.dataset.prevVolume = audio.volume;
+            audio.volume = 0;
+            volumeSlider.value = 0;
+        } else {
+            audio.volume = parseFloat(audio.dataset.prevVolume) || 1;
+            volumeSlider.value = audio.volume;
+        }
+        localStorage.setItem('jamSync_volume', audio.volume);
+        updateVolumeIcon(audio.volume);
+    });
+
+    // ---------- persist liked tracks ----------
+    let likedSet = new Set(JSON.parse(localStorage.getItem('jamSync_liked') || '[]'));
+    function saveLiked() {
+        localStorage.setItem('jamSync_liked', JSON.stringify([...likedSet]));
+    }
+
+    // initial like button state
+    if (likeBtn) {
+        likeBtn.setAttribute('aria-pressed', 'false');
+        likeBtn.innerHTML = '<i class="far fa-heart"></i>';
+    }
+
+    // to be called by main app when track changes
+    window.__updateLikeUI = function(trackId, isLiked) {
+        if (isLiked) {
+            likeBtn.setAttribute('aria-pressed', 'true');
+            likeBtn.innerHTML = '<i class="fas fa-heart"></i>';
+        } else {
+            likeBtn.setAttribute('aria-pressed', 'false');
+            likeBtn.innerHTML = '<i class="far fa-heart"></i>';
+        }
+    };
+
+    likeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const pressed = likeBtn.getAttribute('aria-pressed') === 'true';
+        const newPressed = !pressed;
+        likeBtn.setAttribute('aria-pressed', newPressed);
+        likeBtn.innerHTML = newPressed ? '<i class="fas fa-heart"></i>' : '<i class="far fa-heart"></i>';
+        // actual track id logic should be integrated with main app; we store dummy id for demo
+        // but to keep localstorage persistent we maintain a dummy current track id
+        const currentId = window.__currentTrackId || 'demo-track';
+        if (newPressed) likedSet.add(currentId);
+        else likedSet.delete(currentId);
+        saveLiked();
+    });
+
+    // ---------- error handling UI ----------
+    window.__showError = function(msg, show = true) {
+        if (!audioError) return;
+        if (!show || !msg) {
+            audioError.style.display = 'none';
+            return;
+        }
+        audioError.style.display = 'inline-flex';
+        audioError.innerHTML = `<i class="fas fa-circle-exclamation" style="font-size:0.7rem;"></i> ${msg}`;
+    };
+
+    // ---------- drag to seek ----------
+    let isDragging = false;
+    function handleSeek(e) {
+        if (!audio.duration) return;
+        const rect = progressBar.getBoundingClientRect();
+        let offsetX = e.clientX - rect.left;
+        if (offsetX < 0) offsetX = 0;
+        if (offsetX > rect.width) offsetX = rect.width;
+        const percent = offsetX / rect.width;
+        audio.currentTime = percent * audio.duration;
+        songProgress.style.width = percent * 100 + '%';
+    }
+
+    progressBar.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        isDragging = true;
+        progressBar.classList.add('dragging');
+        handleSeek(e);
+    });
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        e.preventDefault();
+        handleSeek(e);
+    });
+    window.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            progressBar.classList.remove('dragging');
+        }
+    });
+    // mobile touch
+    progressBar.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        isDragging = true;
+        progressBar.classList.add('dragging');
+        handleSeek(e.touches[0]);
+    });
+    window.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        e.preventDefault();
+        handleSeek(e.touches[0]);
+    });
+    window.addEventListener('touchend', () => {
+        isDragging = false;
+        progressBar.classList.remove('dragging');
+    });
+
+    // ---------- keyboard shortcuts ----------
+    document.addEventListener('keydown', (e) => {
+        if (e.target.matches('input, select, textarea')) return;
+        switch(e.key) {
+            case ' ': e.preventDefault(); playPauseBtn.click(); break;
+            case 'ArrowRight': e.preventDefault(); nextBtn.click(); break;
+            case 'ArrowLeft': e.preventDefault(); prevBtn.click(); break;
+            case 'm':
+            case 'M': e.preventDefault(); volumeIcon.click(); break;
+        }
+    });
+
+    // ---------- reconnect indicator ----------
+    const livePill = document.getElementById('livePill');
+    let reconnectIndicator = null;
+    const socket = io(); // assuming socket already exists
+    socket.on('disconnect', () => {
+        if (!reconnectIndicator) {
+            reconnectIndicator = document.createElement('span');
+            reconnectIndicator.className = 'reconnect-indicator';
+            reconnectIndicator.innerHTML = '<i class="fas fa-wifi"></i> reconnecting...';
+            livePill.parentNode.insertBefore(reconnectIndicator, livePill.nextSibling);
+        }
+    });
+    socket.on('connect', () => {
+        if (reconnectIndicator) {
+            reconnectIndicator.remove();
+            reconnectIndicator = null;
+        }
+    });
+
+    // ---------- playing glow ----------
+    audio.addEventListener('play', () => {
+        playerArt.classList.add('playing-glow');
+    });
+    audio.addEventListener('pause', () => {
+        playerArt.classList.remove('playing-glow');
+    });
+    audio.addEventListener('ended', () => {
+        playerArt.classList.remove('playing-glow');
+    });
+
+    // ---------- volume slider consistency & aria sync ----------
+    // (already 0-1 matches)
+
+    // ---------- inject into global for main app ----------
+    window.__likedSet = likedSet;
+    window.__saveLiked = saveLiked;
+    window.__updateVolumeIcon = updateVolumeIcon;
+})();
+</script>
 <script src="/js/script.js"></script>
 </body>
 </html>
