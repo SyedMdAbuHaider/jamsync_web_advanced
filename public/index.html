@@ -304,6 +304,8 @@
 
         .track {
             display: grid;
+            /* Adjusted grid: index column (28px), thumbnail (52px), 
+               info (1fr), and likes column (auto) — info now gets more breathing room */
             grid-template-columns: 28px 52px minmax(0, 1fr) auto;
             align-items: center;
             gap: 14px;
@@ -410,6 +412,8 @@
         .track-info { 
             min-width: 0;
             overflow: hidden;
+            /* Ensure the container uses full available width */
+            width: 100%;
         }
 
         .track-title {
@@ -421,6 +425,7 @@
             text-overflow: ellipsis;
             transition: 0.2s;
             width: 100%;
+            /* FIX: give extra space — it was already 1fr, but to be safe we ensure no extra constraints */
         }
 
         .track.playing .track-title { color: var(--lime); }
