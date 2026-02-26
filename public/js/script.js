@@ -1,5 +1,6 @@
 const socket = io();
 window.socket = socket;
+window.__volumeHandlerActive = true;
 
 // ============================================================================
 // CORE STATE MANAGEMENT (Ready for module separation)
@@ -112,6 +113,9 @@ const AppState = (() => {
     },
 
     shouldSync: (position) => {
+      const audioPlayer = DOM.audioPlayer;
+      if (!audioPlayer) return false;
+      
       return !_isUserInteracting && 
              Math.abs(audioPlayer.currentTime - position) > _syncDriftThreshold &&
              (Date.now() - _lastSyncTime) > 1000; // Throttle sync
@@ -423,7 +427,7 @@ const UIRenderer = (() => {
 
   function updateVolumeUI(volume) {
     if (DOM.volumeSlider) {
-      DOM.volumeSlider.value = volume * 100;
+      DOM.volumeSlider.value = volume;
     }
     if (DOM.volumeIcon) {
       if (volume === 0) {
@@ -621,6 +625,8 @@ const AudioManager = (() => {
     if (!audioPlayer || !track) return;
     
     AppState.setCurrentTrack(track);
+    window.__currentTrackId = track.id;
+    
     audioPlayer.src = track.url;
     
     // Immediate UI update
@@ -942,7 +948,7 @@ if (DOM.repeatBtn) {
 // Volume handler
 if (DOM.volumeSlider) {
   DOM.volumeSlider.addEventListener('input', (e) => {
-    const volume = parseInt(e.target.value, 10) / 100;
+    const volume = parseFloat(e.target.value);
     AudioManager.setVolume(volume);
   });
 }
