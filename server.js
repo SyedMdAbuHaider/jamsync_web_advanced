@@ -181,6 +181,21 @@ io.on('connection', (socket) => {
     
     // Notify creator
     socket.emit('room-created', { roomCode });
+    
+    // Send initial state to the room creator
+    socket.emit('init', {
+      tracks,
+      playlists,
+      currentState: {
+        currentTrack: rooms[roomCode].currentTrack,
+        position: getCurrentPosition(rooms[roomCode]),
+        isPlaying: rooms[roomCode].isPlaying,
+        lastUpdate: rooms[roomCode].lastUpdate,
+        queue: rooms[roomCode].queue,
+        currentTrackIndex: 0 // Kept for compatibility
+      }
+    });
+    
     console.log(`Room created: ${roomCode} by ${socket.id}`);
   });
   
