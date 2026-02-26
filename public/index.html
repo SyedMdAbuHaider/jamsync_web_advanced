@@ -1486,14 +1486,14 @@
                 }
             });
 
-            // room-created: we receive room code
-            socket.on('room-created', (code) => {
+            // room-created: we receive room code as object { roomCode: string }
+            socket.on('room-created', ({ roomCode }) => {
                 // Clear joining flag
                 isJoiningOrCreating = false;
                 hasJoinedRoom = true;
                 
-                localStorage.setItem('jamSync_room', code);
-                updateRoomBadge(code);
+                localStorage.setItem('jamSync_room', roomCode);
+                updateRoomBadge(roomCode);
                 setOverlayVisible(false);
                 roomCodeInput.value = ''; // clean
                 roomError.innerText = ''; // clear any old error
@@ -1528,13 +1528,13 @@
                 roomError.innerText = '';
             });
 
-            // room-error: show on overlay
-            socket.on('room-error', (errMsg) => {
+            // room-error: show on overlay – receive object { message: string }
+            socket.on('room-error', ({ message }) => {
                 // Clear joining flag
                 isJoiningOrCreating = false;
                 hasJoinedRoom = false;
 
-                roomError.innerText = errMsg || 'room error';
+                roomError.innerText = message || 'room error';
                 // make sure overlay is visible if there's an error
                 setOverlayVisible(true);
                 
