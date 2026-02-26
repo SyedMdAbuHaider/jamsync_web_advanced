@@ -155,6 +155,28 @@
 
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
+        /* --- room indicator (subtle, added later) --- */
+        .room-badge {
+            background: var(--ink3);
+            border: 1px solid var(--line);
+            border-radius: 40px;
+            padding: 4px 12px;
+            font-family: 'Space Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--lime);
+            letter-spacing: 0.1em;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: background-color 0.2s, color 0.2s;
+        }
+        .room-badge i {
+            font-size: 0.6rem;
+            color: var(--lime-dim);
+        }
+
         .now-playing-mobile {
             display: flex;
             align-items: center;
@@ -840,6 +862,111 @@
 
         #audioPlayer { display: none; }
 
+        /* ----- ROOM OVERLAY (fullscreen, glass, hidden by default) ----- */
+        .room-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(10,10,15,0.75);
+            backdrop-filter: blur(12px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            transition: opacity 0.25s ease;
+            border-radius: 32px; /* match container */
+            pointer-events: auto;
+        }
+        .room-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+            visibility: hidden;
+        }
+        .room-card {
+            background: var(--ink2);
+            border: 1px solid var(--line);
+            border-radius: 32px;
+            padding: 38px 32px;
+            max-width: 380px;
+            width: 90%;
+            box-shadow: 0 35px 70px -20px black;
+            backdrop-filter: blur(4px);
+            text-align: center;
+        }
+        .room-card h2 {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 2.2rem;
+            letter-spacing: 0.04em;
+            color: var(--lime);
+            margin-bottom: 12px;
+        }
+        .room-card p {
+            color: var(--muted);
+            font-size: 0.85rem;
+            margin-bottom: 28px;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 22px;
+        }
+        .room-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .room-input-group input {
+            background: var(--ink3);
+            border: 1px solid var(--line);
+            border-radius: 60px;
+            padding: 16px 20px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.9rem;
+            color: var(--white);
+            outline: none;
+            transition: 0.2s;
+            text-align: center;
+            letter-spacing: 0.1em;
+        }
+        .room-input-group input:focus {
+            border-color: var(--lime);
+            box-shadow: 0 0 0 3px rgba(200,245,60,0.15);
+        }
+        .room-input-group input::placeholder {
+            color: var(--dimmer);
+            letter-spacing: normal;
+        }
+        .room-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .room-btn {
+            background: var(--lime-soft);
+            border: 1px solid rgba(200,245,60,0.25);
+            border-radius: 60px;
+            padding: 14px 28px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-weight: 600;
+            color: var(--lime);
+            cursor: pointer;
+            transition: 0.2s;
+            flex: 1 1 auto;
+            min-width: 120px;
+            font-size: 0.9rem;
+        }
+        .room-btn:hover {
+            background: var(--lime);
+            border-color: var(--lime);
+            color: #000;
+            transform: translateY(-2px);
+        }
+        .room-error {
+            color: #ff5f6d;
+            font-size: 0.75rem;
+            margin-top: 16px;
+            min-height: 24px;
+            font-family: 'Space Mono', monospace;
+        }
+
         @media (min-width: 660px) {
             .player-bar { flex-direction: row; }
             .now-playing-mobile { display: none; }
@@ -894,12 +1021,29 @@
 <body>
 
 <div class="app-container">
+    <!-- ROOM OVERLAY – hidden by default, shown until join/create -->
+    <div id="roomOverlay" class="room-overlay">
+        <div class="room-card">
+            <h2>JAM<em style="color:var(--lime);">SYNC</em></h2>
+            <p>create or join a session</p>
+            <div class="room-input-group">
+                <input type="text" id="roomCodeInput" placeholder="enter room code" autocomplete="off" spellcheck="false">
+                <div class="room-buttons">
+                    <button class="room-btn" id="createRoomBtn">create</button>
+                    <button class="room-btn" id="joinRoomBtn">join</button>
+                </div>
+            </div>
+            <div id="roomErrorMessage" class="room-error"></div>
+        </div>
+    </div>
+
     <header>
         <div class="logo-area">
             <div class="logo-icon">JS</div>
             <h1>JAM<em>SYNC</em></h1>
         </div>
         <div class="header-right">
+            <!-- room badge will be injected here if needed (dynamic) -->
             <div class="live-pill" id="livePill">
                 <span class="live-dot"></span>
                 LIVE SYNC
@@ -1205,6 +1349,230 @@
             window.__likedSet = likedSet;
             window.__saveLiked = saveLiked;
             window.__updateVolumeIcon = updateVolumeIcon;
+
+            // ========== FIXED ROOM SYSTEM LAYER ==========
+            const overlay = document.getElementById('roomOverlay');
+            const roomCodeInput = document.getElementById('roomCodeInput');
+            const createBtn = document.getElementById('createRoomBtn');
+            const joinBtn = document.getElementById('joinRoomBtn');
+            const roomError = document.getElementById('roomErrorMessage');
+            const headerRight = document.querySelector('.header-right');
+
+            // Room state guard to prevent duplicate emits
+            let isJoiningOrCreating = false;
+            let hasJoinedRoom = false; // tracks if we successfully joined a room this session
+
+            // helper to show/hide overlay
+            function setOverlayVisible(visible) {
+                if (visible) overlay.classList.remove('hidden');
+                else overlay.classList.add('hidden');
+            }
+
+            // display room code in header (small badge)
+            let roomBadge = null;
+            function updateRoomBadge(code) {
+                if (!code) {
+                    if (roomBadge) roomBadge.remove();
+                    roomBadge = null;
+                    return;
+                }
+                if (!roomBadge) {
+                    roomBadge = document.createElement('div');
+                    roomBadge.className = 'room-badge';
+                    roomBadge.setAttribute('title', 'click to copy room code');
+                    roomBadge.style.cursor = 'pointer';
+                    headerRight.insertBefore(roomBadge, livePill); // place before live pill
+                    
+                    // click to copy room code
+                    roomBadge.addEventListener('click', () => {
+                        const code = roomBadge.textContent.replace('🔑', '').trim();
+                        navigator.clipboard?.writeText(code).then(() => {
+                            // subtle visual feedback
+                            roomBadge.style.backgroundColor = 'var(--lime-soft)';
+                            roomBadge.style.color = 'var(--lime)';
+                            setTimeout(() => {
+                                roomBadge.style.backgroundColor = '';
+                                roomBadge.style.color = '';
+                            }, 200);
+                        }).catch(() => {});
+                    });
+                }
+                roomBadge.innerHTML = `<i class="fas fa-door-open"></i> ${code}`;
+            }
+
+            // Reset room state (on error or explicit)
+            function resetRoomState() {
+                localStorage.removeItem('jamSync_room');
+                updateRoomBadge(null);
+                hasJoinedRoom = false;
+                // do NOT reset isJoiningOrCreating here, let it clear naturally
+            }
+
+            // Safely emit join-room with guard
+            function emitJoinRoom(roomCode) {
+                if (!socket.connected) {
+                    roomError.innerText = 'socket not connected, try again';
+                    return false;
+                }
+                if (isJoiningOrCreating) {
+                    roomError.innerText = 'already joining or creating, please wait';
+                    return false;
+                }
+                isJoiningOrCreating = true;
+                roomError.innerText = '';
+                socket.emit('join-room', { roomCode });
+                return true;
+            }
+
+            // Safely emit create-room
+            function emitCreateRoom() {
+                if (!socket.connected) {
+                    roomError.innerText = 'socket not connected, try again';
+                    return false;
+                }
+                if (isJoiningOrCreating) {
+                    roomError.innerText = 'already joining or creating, please wait';
+                    return false;
+                }
+                isJoiningOrCreating = true;
+                roomError.innerText = '';
+                socket.emit('create-room');
+                return true;
+            }
+
+            // Connect handler: auto-join if room exists
+            function handleConnect() {
+                // Always read fresh from localStorage
+                const savedRoom = localStorage.getItem('jamSync_room');
+                if (savedRoom && !hasJoinedRoom) {
+                    // Only auto-join if we haven't already joined a room in this session
+                    socket.emit('join-room', { roomCode: savedRoom });
+                    // We don't set isJoiningOrCreating here because it's an auto process, but we can show subtle indicator
+                    // Optionally show a "rejoining..." message? Not necessary.
+                } else if (!savedRoom && !hasJoinedRoom) {
+                    // No saved room and not joined -> show overlay
+                    setOverlayVisible(true);
+                }
+            }
+
+            // Listen to connect event for auto-join
+            socket.on('connect', handleConnect);
+
+            // If socket is already connected, check immediately
+            if (socket.connected) {
+                handleConnect();
+            }
+
+            // create room
+            createBtn.addEventListener('click', () => {
+                emitCreateRoom();
+            });
+
+            // join room
+            joinBtn.addEventListener('click', () => {
+                const code = roomCodeInput.value.trim().toUpperCase();
+                if (!code) {
+                    roomError.innerText = 'enter a room code';
+                    return;
+                }
+                emitJoinRoom(code);
+            });
+
+            // Enter key support for join
+            roomCodeInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    joinBtn.click();
+                }
+            });
+
+            // room-created: we receive room code
+            socket.on('room-created', (code) => {
+                // Clear joining flag
+                isJoiningOrCreating = false;
+                hasJoinedRoom = true;
+                
+                localStorage.setItem('jamSync_room', code);
+                updateRoomBadge(code);
+                setOverlayVisible(false);
+                roomCodeInput.value = ''; // clean
+                roomError.innerText = ''; // clear any old error
+            });
+
+            // init: room joined successfully
+            socket.on('init', (data) => {
+                // Clear joining flag
+                isJoiningOrCreating = false;
+                hasJoinedRoom = true;
+
+                // Always read fresh room code from localStorage or from data
+                const savedRoom = localStorage.getItem('jamSync_room');
+                let activeRoom = data?.roomCode || savedRoom;
+                
+                if (activeRoom) {
+                    // Ensure it's saved (if not already)
+                    localStorage.setItem('jamSync_room', activeRoom);
+                    updateRoomBadge(activeRoom);
+                } else {
+                    // No room code in init – possible? fallback: if we have saved, use it.
+                    if (savedRoom) {
+                        updateRoomBadge(savedRoom);
+                    } else {
+                        // No room at all – show overlay
+                        setOverlayVisible(true);
+                    }
+                }
+                
+                setOverlayVisible(false);
+                roomCodeInput.value = '';
+                roomError.innerText = '';
+            });
+
+            // room-error: show on overlay
+            socket.on('room-error', (errMsg) => {
+                // Clear joining flag
+                isJoiningOrCreating = false;
+                hasJoinedRoom = false;
+
+                roomError.innerText = errMsg || 'room error';
+                // make sure overlay is visible if there's an error
+                setOverlayVisible(true);
+                
+                // Clear saved room and badge
+                resetRoomState();
+                
+                // Clear input field for fresh start
+                roomCodeInput.value = '';
+            });
+
+            // Handle disconnect: reset joining flag, but preserve overlay visibility logic
+            socket.on('disconnect', () => {
+                isJoiningOrCreating = false;
+                // We do NOT hide overlay; if user was in a room, reconnect will auto-join.
+                // But if they had a room, we keep badge; reconnect will try to rejoin.
+            });
+
+            // Optional: if we get a reconnect, we don't want to show overlay if we have a saved room
+            // That's already handled in connect handler.
+
+            // Clean up on socket reconnect attempts (avoid stale state)
+            socket.io?.on("reconnect_attempt", () => {
+                // Reset joining flag to allow new attempts
+                isJoiningOrCreating = false;
+            });
+
+            // If there's any chance the socket is not connected and we have saved room, show overlay? No, overlay only if no saved room.
+            // But if we have saved room and socket disconnected, we still show badge and keep overlay hidden.
+            // That's correct.
+
+            // Ensure overlay hidden when room is active and socket connected
+            // (just a safety check)
+            if (localStorage.getItem('jamSync_room') && socket.connected) {
+                // assume room is good, but if not, init/error will correct.
+                setOverlayVisible(false);
+            }
+
+            // subtle copy feedback is handled in roomBadge click
         }
     }, 50);
 })();
