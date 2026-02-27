@@ -3,13 +3,65 @@ const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs');
+const admin = require('firebase-admin');
 
 const app = express();
 const server = http.createServer(app);
+
+// Environment variable validation BEFORE Firebase initialization
+const requiredEnvVars = [
+  'FIREBASE_PROJECT_ID',
+  'FIREBASE_CLIENT_EMAIL',
+  'FIREBASE_PRIVATE_KEY',
+  'FIREBASE_DATABASE_URL'
+];
+
+requiredEnvVars.forEach(envVar => {
+  if (!process.env[envVar]) {
+    throw new Error("Missing Firebase environment variables");
+  }
+});
+
+// Initialize Firebase Admin SDK
+const serviceAccount = {
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+  privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  databaseURL: process.env.FIREBASE_DATABASE_URL
+};
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  databaseURL: process.env.FIREBASE_DATABASE_URL
+});
+
+const db = admin.database();
+function getRoomRef(roomCode) {
+    return db.ref(`rooms/${roomCode}`);
+}
+
 const io = socketIo(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
+  }
+});
+
+// Socket.IO authentication middleware
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth?.token;
+  
+  if (!token) {
+    return next(new Error('Authentication token missing'));
+  }
+  
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    socket.user = decodedToken;
+    next();
+  } catch (error) {
+    console.error('Token verification failed:', error);
+    next(new Error('Invalid authentication token'));
   }
 });
 
@@ -44,9 +96,7 @@ const savePlaylists = (playlists) => {
 let playlists = loadPlaylists();
 
 // Multi-room architecture
-// rooms: roomCode -> room state
 // socketRoomMap: socket.id -> roomCode
-const rooms = {};
 const socketRoomMap = {};
 
 // Generate a unique room code
@@ -80,60 +130,47 @@ const getTracks = () => {
 const tracks = getTracks();
 
 // Play next track in queue for a specific room
-function playNextTrack(roomCode) {
-  const room = rooms[roomCode];
+async function playNextTrack(roomCode) {
+  const snapshot = await getRoomRef(roomCode).once('value');
+  const room = snapshot.val();
   if (!room) return;
   
+  let newQueue;
   if (room.queue.length === 0) {
-    room.queue = [...tracks]; // Replenish queue
+    newQueue = [...tracks];
+  } else {
+    newQueue = room.queue;
   }
   
-  room.currentTrack = room.queue.shift();
-  room.position = 0;
-  room.isPlaying = true;
-  room.lastUpdate = Date.now();
+  const currentTrack = newQueue.shift();
+  
+  await getRoomRef(roomCode).update({
+    currentTrack: currentTrack,
+    position: 0,
+    isPlaying: true,
+    lastUpdate: Date.now(),
+    queue: newQueue
+  });
   
   io.to(roomCode).emit('track-changed', {
-    track: room.currentTrack,
+    track: currentTrack,
     position: 0,
     isPlaying: true,
     timestamp: Date.now()
   });
 }
 
-// Calculate current position for a specific room
-function getCurrentPosition(room) {
-  if (!room.isPlaying) return room.position;
-  const elapsed = (Date.now() - room.lastUpdate) / 1000;
-  return Math.min(room.position + elapsed, room.currentTrack?.duration || Infinity);
-}
-
 // Clean up empty rooms
-function cleanupEmptyRoom(roomCode) {
+async function cleanupEmptyRoom(roomCode) {
   // Check if room exists in Socket.IO adapter and has no clients
   const clients = io.sockets.adapter.rooms.get(roomCode);
   if (!clients || clients.size === 0) {
-    delete rooms[roomCode];
+    await getRoomRef(roomCode).remove();
     console.log(`Room ${roomCode} deleted - no clients remaining`);
-    console.log(`Active rooms: ${Object.keys(rooms).length}`); // IMPROVED: Added room count logging
   }
 }
 
-// Sync all rooms every second
-setInterval(() => {
-  // Loop through all active rooms
-  Object.keys(rooms).forEach(roomCode => {
-    const room = rooms[roomCode];
-    if (!room) return;
-    
-    io.to(roomCode).emit('sync', {
-      position: getCurrentPosition(room),
-      isPlaying: room.isPlaying,
-      currentTrack: room.currentTrack,
-      timestamp: Date.now()
-    });
-  });
-}, 1000);
+const roomListeners = {};
 
 app.use(express.static(PUBLIC_DIR));
 
@@ -146,12 +183,12 @@ app.get('/playlists', (req, res) => {
 });
 
 io.on('connection', (socket) => {
-  console.log(`Socket connected: ${socket.id}`);
+  console.log(`Socket connected: ${socket.id} (User: ${socket.user?.uid || 'unknown'})`);
 
   // ===== ROOM MANAGEMENT =====
   
   // Create a new room
-  socket.on('create-room', () => {
+  socket.on('create-room', async () => {
     // IMPROVED: Leave any existing room first to prevent ghost membership
     const oldRoom = socketRoomMap[socket.id];
     if (oldRoom) {
@@ -163,17 +200,21 @@ io.on('connection', (socket) => {
     // Generate unique room code
     do {
       roomCode = generateRoomCode();
-    } while (rooms[roomCode]);
+      const snapshot = await getRoomRef(roomCode).once('value');
+      if (!snapshot.exists()) {
+        break;
+      }
+    } while (true);
     
-    // Initialize room state
-    rooms[roomCode] = {
+    // Initialize room state in Firebase with user uid as host
+    await getRoomRef(roomCode).set({
+      host: socket.user.uid,
       currentTrack: null,
       position: 0,
       isPlaying: false,
       lastUpdate: Date.now(),
-      queue: [...tracks], // Start with all tracks in queue
-      host: socket.id
-    };
+      queue: [...tracks] // Start with all tracks in queue
+    });
     
     // Join socket to room
     socket.join(roomCode);
@@ -183,26 +224,29 @@ io.on('connection', (socket) => {
     socket.emit('room-created', { roomCode });
     
     // Send initial state to the room creator
+    const snapshot = await getRoomRef(roomCode).once('value');
+    const roomData = snapshot.val();
     socket.emit('init', {
       tracks,
       playlists,
       currentState: {
-        currentTrack: rooms[roomCode].currentTrack,
-        position: getCurrentPosition(rooms[roomCode]),
-        isPlaying: rooms[roomCode].isPlaying,
-        lastUpdate: rooms[roomCode].lastUpdate,
-        queue: rooms[roomCode].queue,
+        currentTrack: roomData.currentTrack,
+        position: roomData.position,
+        isPlaying: roomData.isPlaying,
+        lastUpdate: roomData.lastUpdate,
+        queue: roomData.queue,
         currentTrackIndex: 0 // Kept for compatibility
       }
     });
     
-    console.log(`Room created: ${roomCode} by ${socket.id}`);
+    console.log(`Room created: ${roomCode} by user ${socket.user.uid}`);
   });
   
   // Join an existing room
-  socket.on('join-room', ({ roomCode }) => {
-    // Validate room exists
-    if (!rooms[roomCode]) {
+  socket.on('join-room', async ({ roomCode }) => {
+    // Validate room exists in Firebase
+    const snapshot = await getRoomRef(roomCode).once('value');
+    if (!snapshot.exists()) {
       // IMPROVED: Changed from 'error' to 'room-error' to avoid reserved event name
       socket.emit('room-error', { message: 'Room not found' });
       return;
@@ -220,23 +264,46 @@ io.on('connection', (socket) => {
     socketRoomMap[socket.id] = roomCode;
     
     // Send initial state to this user only
+    const roomData = snapshot.val();
     socket.emit('init', {
       tracks,
       playlists,
       currentState: {
-        currentTrack: rooms[roomCode].currentTrack,
-        position: getCurrentPosition(rooms[roomCode]),
-        isPlaying: rooms[roomCode].isPlaying,
-        lastUpdate: rooms[roomCode].lastUpdate,
-        queue: rooms[roomCode].queue,
+        currentTrack: roomData.currentTrack,
+        position: roomData.position,
+        isPlaying: roomData.isPlaying,
+        lastUpdate: roomData.lastUpdate,
+        queue: roomData.queue,
         currentTrackIndex: 0 // Kept for compatibility
       }
     });
     
-    console.log(`Socket ${socket.id} joined room: ${roomCode}`);
+    console.log(`Socket ${socket.id} (User: ${socket.user.uid}) joined room: ${roomCode}`);
+    
+    // Set up real-time sync for this room
+    const roomRef = getRoomRef(roomCode);
+    const listener = roomRef.on('value', (snapshot) => {
+      const room = snapshot.val();
+      if (!room) return;
+
+      const elapsed = room.isPlaying
+        ? (Date.now() - room.lastUpdate) / 1000
+        : 0;
+
+      const currentPosition = room.position + elapsed;
+
+      io.to(roomCode).emit('sync', {
+        position: currentPosition,
+        isPlaying: room.isPlaying,
+        currentTrack: room.currentTrack,
+        timestamp: Date.now()
+      });
+    });
+    
+    roomListeners[socket.id] = { roomCode, listener };
   });
 
-  // ===== EXISTING EVENTS (Now room-scoped with host protection) =====
+  // ===== EXISTING EVENTS (Now room-scoped with host protection using uid) =====
   
   // Track duration reporting (NO host protection - anyone can report duration)
   socket.on('duration', ({ trackId, duration }) => {
@@ -245,23 +312,26 @@ io.on('connection', (socket) => {
   });
 
   // Playback control (WITH host protection)
-  socket.on('play', ({ trackId }) => {
+  socket.on('play', async ({ trackId }) => {
     const roomCode = socketRoomMap[socket.id];
-    if (!roomCode || !rooms[roomCode]) return;
+    if (!roomCode) return;
     
-    // IMPROVED: Host-only protection
-    if (rooms[roomCode].host !== socket.id) return;
+    const snapshot = await getRoomRef(roomCode).once('value');
+    const roomData = snapshot.val();
+    if (!roomData) return;
+    
+    // IMPROVED: Host-only protection using uid
+    if (roomData.host !== socket.user.uid) return;
     
     const track = tracks.find(t => t.id === trackId);
     if (!track) return;
     
-    rooms[roomCode] = {
-      ...rooms[roomCode],
+    await getRoomRef(roomCode).update({
       currentTrack: track,
       position: 0,
       isPlaying: true,
       lastUpdate: Date.now()
-    };
+    });
 
     io.to(roomCode).emit('track-changed', {
       track,
@@ -271,73 +341,86 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('pause', () => {
+  socket.on('pause', async () => {
     const roomCode = socketRoomMap[socket.id];
-    if (!roomCode || !rooms[roomCode]) return;
+    if (!roomCode) return;
     
-    // IMPROVED: Host-only protection
-    if (rooms[roomCode].host !== socket.id) return;
+    const snapshot = await getRoomRef(roomCode).once('value');
+    const roomData = snapshot.val();
+    if (!roomData) return;
     
-    rooms[roomCode] = {
-      ...rooms[roomCode],
-      position: getCurrentPosition(rooms[roomCode]),
+    // IMPROVED: Host-only protection using uid
+    if (roomData.host !== socket.user.uid) return;
+    
+    await getRoomRef(roomCode).update({
+      position: roomData.position,
       isPlaying: false,
       lastUpdate: Date.now()
-    };
+    });
     
     io.to(roomCode).emit('pause', {
-      position: rooms[roomCode].position,
+      position: roomData.position,
       timestamp: Date.now()
     });
   });
 
-  socket.on('seek', ({ position }) => {
+  socket.on('seek', async ({ position }) => {
     const roomCode = socketRoomMap[socket.id];
-    if (!roomCode || !rooms[roomCode]) return;
+    if (!roomCode) return;
     
-    // IMPROVED: Host-only protection
-    if (rooms[roomCode].host !== socket.id) return;
+    const snapshot = await getRoomRef(roomCode).once('value');
+    const roomData = snapshot.val();
+    if (!roomData) return;
     
-    rooms[roomCode] = {
-      ...rooms[roomCode],
+    // IMPROVED: Host-only protection using uid
+    if (roomData.host !== socket.user.uid) return;
+    
+    await getRoomRef(roomCode).update({
       position: Math.max(0, position),
       lastUpdate: Date.now()
-    };
+    });
     
     io.to(roomCode).emit('seek', {
-      position: rooms[roomCode].position,
+      position: Math.max(0, position),
       timestamp: Date.now()
     });
   });
 
   // Navigation controls (WITH host protection)
-  socket.on('next', () => {
+  socket.on('next', async () => {
     const roomCode = socketRoomMap[socket.id];
-    if (!roomCode || !rooms[roomCode]) return;
+    if (!roomCode) return;
     
-    // IMPROVED: Host-only protection
-    if (rooms[roomCode].host !== socket.id) return;
+    const snapshot = await getRoomRef(roomCode).once('value');
+    const roomData = snapshot.val();
+    if (!roomData) return;
     
-    playNextTrack(roomCode);
+    // IMPROVED: Host-only protection using uid
+    if (roomData.host !== socket.user.uid) return;
+    
+    await playNextTrack(roomCode);
   });
 
-  socket.on('previous', () => {
+  socket.on('previous', async () => {
     const roomCode = socketRoomMap[socket.id];
-    if (!roomCode || !rooms[roomCode]) return;
+    if (!roomCode) return;
     
-    // IMPROVED: Host-only protection
-    if (rooms[roomCode].host !== socket.id) return;
+    const snapshot = await getRoomRef(roomCode).once('value');
+    const roomData = snapshot.val();
+    if (!roomData) return;
     
-    const prevIndex = (tracks.findIndex(t => t.id === rooms[roomCode].currentTrack?.id) - 1 + tracks.length) % tracks.length;
+    // IMPROVED: Host-only protection using uid
+    if (roomData.host !== socket.user.uid) return;
+    
+    const prevIndex = (tracks.findIndex(t => t.id === roomData.currentTrack?.id) - 1 + tracks.length) % tracks.length;
     const track = tracks[prevIndex];
     
-    rooms[roomCode] = {
-      ...rooms[roomCode],
+    await getRoomRef(roomCode).update({
       currentTrack: track,
       position: 0,
       isPlaying: true,
       lastUpdate: Date.now()
-    };
+    });
     
     io.to(roomCode).emit('track-changed', {
       track,
@@ -348,20 +431,24 @@ io.on('connection', (socket) => {
   });
 
   // Track ended (WITH host protection)
-  socket.on('track-ended', () => {
+  socket.on('track-ended', async () => {
     const roomCode = socketRoomMap[socket.id];
-    if (!roomCode || !rooms[roomCode]) return;
+    if (!roomCode) return;
     
-    // IMPROVED: Host-only protection
-    if (rooms[roomCode].host !== socket.id) return;
+    const snapshot = await getRoomRef(roomCode).once('value');
+    const roomData = snapshot.val();
+    if (!roomData) return;
     
-    playNextTrack(roomCode);
+    // IMPROVED: Host-only protection using uid
+    if (roomData.host !== socket.user.uid) return;
+    
+    await playNextTrack(roomCode);
   });
 
   // Playlist management (still global, but room-scoped broadcast) - NO host protection
   socket.on('add-to-playlist', ({ playlistName, trackId }) => {
     const roomCode = socketRoomMap[socket.id];
-    if (!roomCode || !rooms[roomCode]) return;
+    if (!roomCode) return;
     
     const track = tracks.find(t => t.id === trackId);
     if (!track) return;
@@ -387,7 +474,13 @@ io.on('connection', (socket) => {
     // Remove socket from mapping
     delete socketRoomMap[socket.id];
     
-    console.log(`Socket ${socket.id} disconnected from room ${roomCode}`);
+    const listenerEntry = roomListeners[socket.id];
+    if (listenerEntry) {
+        getRoomRef(listenerEntry.roomCode).off('value', listenerEntry.listener);
+        delete roomListeners[socket.id];
+    }
+    
+    console.log(`Socket ${socket.id} (User: ${socket.user?.uid || 'unknown'}) disconnected from room ${roomCode}`);
     
     // Check if room is now empty and clean up
     cleanupEmptyRoom(roomCode);
