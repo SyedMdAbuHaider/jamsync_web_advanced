@@ -245,17 +245,17 @@ This project is licensed with **love** – feel free to use, modify, and share, 
   know that I'm right there with you —<br>
   in the music, in the silence, in everything.
   
-  *Distance is just a test of how far love can travel.*
+  *Distance is just a test of how far we have loved .*
   
   <br>
   
   **With love,**
   
-  **— Your forever duet partner** 🎵
+  **— Will be forever there dear** 🎵
   
   <br>
   
-  [![Made with Love](https://img.shields.io/badge/Made%20with-Love-ff69b4.svg)](https://github.com/yourusername/jamsync)
+  [![Made with lost emotions](https://img.shields.io/badge/Made%20with-Love-ff69b4.svg)](https://github.com/yourusername/jamsync)
   
 </div>
 
