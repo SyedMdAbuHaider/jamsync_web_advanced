@@ -241,7 +241,7 @@ This project is licensed with **love** – feel free to use, modify, and share, 
   
   **To Samia, with all my heart**
   
-  Every time you press play,<br>
+  Every time you press play,(i know your forgot about this but i hope)<br>
   know that I'm right there with you —<br>
   in the music, in the silence, in everything.
   
