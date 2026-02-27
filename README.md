@@ -262,5 +262,5 @@ This project is licensed with **love** – feel free to use, modify, and share, 
 ---
 
 <div align="center">
-  <sub>Built with 💖 and JavaScript | © 2024 JamSync</sub>
+  <sub>Building with lost emotions and JavaScript | © 2024 JamSync</sub>
 </div>
