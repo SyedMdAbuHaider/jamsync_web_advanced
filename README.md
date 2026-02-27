@@ -1,4 +1,4 @@
-# 🎵 JamSync – Together in Every Beat
+#  JamSync – Together in Every Beat
 
 ![JamSync Banner](./visual.png)
 
@@ -13,18 +13,18 @@
   
   <br>
   
-  [🌟 About](#-about-the-project) • 
-  [✨ Features](#-features) • 
-  [🎯 Purpose](#-special-purpose) • 
-  [📸 Preview](#-preview) • 
-  [🛠️ Tech](#-tech-stack) • 
-  [🚀 Setup](#-getting-started)
+  [ About](#-about-the-project) • 
+  [ Features](#-features) • 
+  [ Purpose](#-special-purpose) • 
+  [ Preview](#-preview) • 
+  [ Tech](#-tech-stack) • 
+  [ Setup](#-getting-started)
   
 </div>
 
 ---
 
-## 🌟 About the Project
+##  About the Project
 
 **JamSync** is more than just a web application — it's a **bridge across distances**, a **shared musical journey** designed to bring two people together through the universal language of music.
 
@@ -34,7 +34,7 @@ In a world where physical distance can keep loved ones apart, JamSync creates a 
 
 ---
 
-## ✨ Features
+##  Features
 
 <div align="center">
   <table>
@@ -58,24 +58,24 @@ In a world where physical distance can keep loved ones apart, JamSync creates a 
 ### 🎶 **Perfect Synchronization**
 Powered by `Socket.io`, every play, pause, and seek is mirrored instantly between connected users. No delays, no mismatches — just pure, shared moments in music.
 
-### 📂 **Your Music, Your Story**
+###  **Your Music, Your Story**
 Upload your personal `.mp3` collection to the `public/music/` folder. Every song you've shared, every track that holds a memory — they all find a home here.
 
-### 🎧 **Elegant & Intuitive Interface**
+###  **Elegant & Intuitive Interface**
 A minimalist design that puts the music first. Clean lines, soft shadows, and a soothing gradient background create the perfect ambiance for your listening sessions.
 
-### 💬 **Live Chat *(Coming Soon)***
+###  **Live Chat *(Coming Soon)***
 Share thoughts, lyrics, or just a simple "I miss you" while the music plays. Because sometimes the words between songs matter just as much.
 
-### 🔁 **Mirrored Control**
+###  **Mirrored Control**
 Everything you do, they see. Start a song, pause to laugh at a memory, skip to that one special track — every action is a shared experience.
 
-### 🔐 **Intimate & Private**
+###  **Intimate & Private**
 No sign-ups, no data collection, no distractions. Just a private space for two people to connect through their favorite melodies.
 
 ---
 
-## 🎁 Special Purpose
+##  Special Purpose
 
 <div align="center">
   <img src="https://img.icons8.com/clouds/200/000000/love-message.png" width="120" height="120"/>
@@ -86,11 +86,11 @@ the melody to my silence, the harmony to my rhythm.
 
 This isn't just code on a server. It's:
 
-- 🌙 **Late nights** when music fills the silence between us
-- ☀️ **Morning vibes** that start with our favorite tracks
-- 📍 **Every distance** that music helps us bridge
-- 💕 **Every memory** that has a soundtrack
-- 🎵 **Every future song** we'll discover together
+-  **Late nights** when music fills the silence between us
+-  **Morning vibes** that start with our favorite tracks
+-  **Every distance** that music helps us bridge
+-  **Every memory** that has a soundtrack
+-  **Every future song** we'll discover together
 
 > *"For every note we share, I want us to be together — even when we're far apart."*
 
@@ -98,7 +98,7 @@ Every line of code, every pixel on the screen, every feature implemented — the
 
 ---
 
-## 📸 Preview
+##  Preview
 
 <div align="center">
   <table>
@@ -129,7 +129,7 @@ Every line of code, every pixel on the screen, every feature implemented — the
 
 ---
 
-## 🛠️ Tech Stack
+##  Tech Stack
 
 <div align="center">
   
@@ -156,13 +156,13 @@ Every line of code, every pixel on the screen, every feature implemented — the
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) (v12 or higher)
 - npm (comes with Node.js)
-- Your favorite MP3 files 💝
+- Your favorite MP3 files 
 
 ### Installation
 
@@ -197,7 +197,7 @@ Every line of code, every pixel on the screen, every feature implemented — the
 
 ---
 
-## 🎮 How It Works
+##  How It Works
 
 ```mermaid
 graph LR
@@ -228,9 +228,9 @@ While JamSync is a personal project, the spirit of open source lives here. If yo
 
 ---
 
-## 📝 License
+##  License
 
-This project is licensed with **love** – feel free to use, modify, and share, but always remember that the best code is written with heart.
+This project is licensed with **lost love** – feel free to use, modify, and share, but always remember that the best code is written with heart.
 
 ---
 
