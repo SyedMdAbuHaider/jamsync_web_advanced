@@ -1,1035 +1,822 @@
-const socket = io();
-window.socket = socket;
-window.__volumeHandlerActive = true;
+'use strict';
 
-// ============================================================================
-// CORE STATE MANAGEMENT (Ready for module separation)
-// ============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
+// JamSync Client — app.js
+//
+// IMPORTANT: This file does NOT create its own socket.io connection.
+// The authenticated socket is created by the Firebase auth module in index.html
+// and passed in via window.initializeApp(socket).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── State management ──────────────────────────────────────────────────────────
 
 const AppState = (() => {
-  // Private state
-  let _tracks = [];
-  let _filteredTracks = [];
-  let _currentTrack = null;
-  let _playlists = {};
-  let _isPlaying = false;
-  let _isUserInteracting = false;
-  let _volume = 1.0;
-  let _repeatMode = 'none'; // 'none', 'one', 'all'
-  let _shuffleEnabled = false;
-  let _shuffledQueue = [];
-  let _likedTracks = new Set(); // Local storage for liked tracks
-  let _preloadedAudio = null;
-  let _syncDriftThreshold = 0.5;
-  let _lastSyncTime = 0;
-  let _uiUpdatePending = false;
+  let _tracks          = [];
+  let _filteredTracks  = [];
+  let _currentTrack    = null;
+  let _playlists       = {};
+  let _isPlaying       = false;
+  let _isInteracting   = false;
+  let _volume          = parseFloat(localStorage.getItem('jamSync_volume') ?? '1');
+  let _repeatMode      = localStorage.getItem('jamSync_repeat') || 'none'; // 'none'|'one'|'all'
+  let _shuffleEnabled  = localStorage.getItem('jamSync_shuffle') === 'true';
+  let _shuffledQueue   = [];
+  let _likedTracks     = new Set(JSON.parse(localStorage.getItem('jamSync_liked') || '[]'));
+  let _syncThreshold   = 0.5; // seconds drift before hard-sync
+  let _lastSyncAt      = 0;
 
-  // Public API
   return {
-    // Getters
-    getTracks: () => _tracks,
-    getFilteredTracks: () => _filteredTracks,
-    getCurrentTrack: () => _currentTrack,
-    getPlaylists: () => _playlists,
-    isPlaying: () => _isPlaying,
-    isUserInteracting: () => _isUserInteracting,
-    getVolume: () => _volume,
-    getRepeatMode: () => _repeatMode,
-    isShuffleEnabled: () => _shuffleEnabled,
-    isLiked: (trackId) => _likedTracks.has(trackId),
-    getShuffledQueue: () => _shuffledQueue,
+    /* getters */
+    getTracks:        ()         => _tracks,
+    getFilteredTracks: ()        => _filteredTracks,
+    getCurrentTrack:  ()         => _currentTrack,
+    getPlaylists:     ()         => _playlists,
+    isPlaying:        ()         => _isPlaying,
+    isInteracting:    ()         => _isInteracting,
+    getVolume:        ()         => _volume,
+    getRepeatMode:    ()         => _repeatMode,
+    isShuffleEnabled: ()         => _shuffleEnabled,
+    getShuffledQueue: ()         => _shuffledQueue,
+    isLiked:          (id)       => _likedTracks.has(id),
 
-    // Setters with change detection
-    setTracks: (newTracks) => {
-      _tracks = newTracks.map(track => ({
-        ...track,
-        artist: track.artist || 'JamSync Artist',
-        albumArt: track.albumArt || AppUtils.getRandomAlbumArt(),
-        likes: track.likes || Math.floor(Math.random() * 500) + 100,
-        duration: track.duration || 180
+    /* setters */
+    setTracks(raw) {
+      _tracks = raw.map((t, i) => ({
+        id:       String(t.id ?? i),
+        name:     t.name     || 'Unknown Track',
+        artist:   t.artist   || 'JamSync Artist',
+        album:    t.album    || '',
+        url:      t.url,
+        duration: t.duration || 0,
+        albumArt: t.albumArt || AppUtils.randomEmoji(),
+        likes:    t.likes    || Math.floor(Math.random() * 500) + 50,
       }));
     },
 
-    setFilteredTracks: (newFilteredTracks) => {
-      _filteredTracks = [...newFilteredTracks];
+    setFilteredTracks(v) { _filteredTracks = [...v]; },
+    setCurrentTrack(v)   { _currentTrack   = v; },
+    setPlaylists(v)      { _playlists      = { ...v }; },
+    setIsPlaying(v)      { _isPlaying      = !!v; },
+
+    setInteracting(duration = 600) {
+      _isInteracting = true;
+      clearTimeout(AppState._interactTimer);
+      AppState._interactTimer = setTimeout(() => { _isInteracting = false; }, duration);
     },
 
-    setCurrentTrack: (track) => {
-      _currentTrack = track;
+    setVolume(v) {
+      _volume = Math.max(0, Math.min(1, v));
+      localStorage.setItem('jamSync_volume', _volume);
     },
 
-    setPlaylists: (newPlaylists) => {
-      _playlists = { ...newPlaylists };
-    },
-
-    setIsPlaying: (playing) => {
-      _isPlaying = playing;
-    },
-
-    setIsUserInteracting: (interacting, duration = 500) => {
-      _isUserInteracting = interacting;
-      if (interacting) {
-        setTimeout(() => {
-          _isUserInteracting = false;
-        }, duration);
-      }
-    },
-
-    setVolume: (volume) => {
-      _volume = Math.max(0, Math.min(1, volume));
-    },
-
-    setRepeatMode: (mode) => {
+    setRepeatMode(mode) {
       if (['none', 'one', 'all'].includes(mode)) {
         _repeatMode = mode;
+        localStorage.setItem('jamSync_repeat', mode);
       }
     },
 
-    setShuffleEnabled: (enabled) => {
-      _shuffleEnabled = enabled;
-      if (enabled && _tracks.length > 0) {
-        _shuffledQueue = AppUtils.shuffleArray([..._tracks]);
+    setShuffleEnabled(v) {
+      _shuffleEnabled = !!v;
+      localStorage.setItem('jamSync_shuffle', v);
+      _shuffledQueue = v ? AppUtils.shuffle([..._tracks]) : [];
+    },
+
+    toggleLike(id) {
+      if (_likedTracks.has(id)) {
+        _likedTracks.delete(id);
       } else {
-        _shuffledQueue = [];
+        _likedTracks.add(id);
       }
+      localStorage.setItem('jamSync_liked', JSON.stringify([..._likedTracks]));
+      return _likedTracks.has(id);
     },
 
-    toggleLike: (trackId) => {
-      if (_likedTracks.has(trackId)) {
-        _likedTracks.delete(trackId);
-        return false;
-      } else {
-        _likedTracks.add(trackId);
-        return true;
-      }
+    shouldSync(serverPos) {
+      const audio = DOM.audio;
+      if (!audio || _isInteracting) return false;
+      const drift = Math.abs(audio.currentTime - serverPos);
+      const age   = Date.now() - _lastSyncAt;
+      return drift > _syncThreshold && age > 1000;
     },
 
-    setPreloadedAudio: (audio) => {
-      _preloadedAudio = audio;
-    },
-
-    updateSyncTime: () => {
-      _lastSyncTime = Date.now();
-    },
-
-    shouldSync: (position) => {
-      const audioPlayer = DOM.audioPlayer;
-      if (!audioPlayer) return false;
-      
-      return !_isUserInteracting && 
-             Math.abs(audioPlayer.currentTime - position) > _syncDriftThreshold &&
-             (Date.now() - _lastSyncTime) > 1000; // Throttle sync
-    }
+    markSynced() { _lastSyncAt = Date.now(); },
   };
 })();
 
-// ============================================================================
-// UTILITY FUNCTIONS (Ready for module separation)
-// ============================================================================
+// ── Utilities ─────────────────────────────────────────────────────────────────
 
 const AppUtils = {
-  formatTime(seconds) {
-    if (!seconds || isNaN(seconds) || !isFinite(seconds)) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  formatTime(sec) {
+    if (!sec || isNaN(sec) || !isFinite(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
   },
 
-  getRandomAlbumArt() {
-    const emojis = ['📀', '🎵', '🎸', '🎹', '🎤', '🥁', '🎧', '💿'];
-    return emojis[Math.floor(Math.random() * emojis.length)];
+  randomEmoji() {
+    const pool = ['📀', '🎵', '🎸', '🎹', '🎤', '🥁', '🎧', '💿', '🎺', '🎻'];
+    return pool[Math.floor(Math.random() * pool.length)];
   },
 
-  debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-      const later = () => {
-        clearTimeout(timeout);
-        func(...args);
-      };
-      clearTimeout(timeout);
-      timeout = setTimeout(later, wait);
-    };
-  },
-
-  shuffleArray(array) {
-    const newArray = [...array];
-    for (let i = newArray.length - 1; i > 0; i--) {
+  shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+      [arr[i], arr[j]] = [arr[j], arr[i]];
     }
-    return newArray;
+    return arr;
   },
 
-  getNextTrack(currentTrackId, tracks, repeatMode, shuffleEnabled, shuffledQueue) {
+  debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  },
+
+  getNextTrack(currentId) {
+    const tracks     = AppState.getTracks();
+    const repeat     = AppState.getRepeatMode();
+    const shuffle    = AppState.isShuffleEnabled();
+    const queue      = AppState.getShuffledQueue();
+
     if (!tracks.length) return null;
-    
-    if (repeatMode === 'one') return tracks.find(t => t.id === currentTrackId);
-    
-    if (shuffleEnabled && shuffledQueue.length) {
-      const currentIndex = shuffledQueue.findIndex(t => t.id === currentTrackId);
-      if (currentIndex === -1) return shuffledQueue[0];
-      return shuffledQueue[(currentIndex + 1) % shuffledQueue.length];
-    }
-    
-    const currentIndex = tracks.findIndex(t => t.id === currentTrackId);
-    if (currentIndex === -1) return tracks[0];
-    
-    if (repeatMode === 'all') {
-      return tracks[(currentIndex + 1) % tracks.length];
-    }
-    
-    return tracks[currentIndex + 1] || null;
+    if (repeat === 'one') return tracks.find(t => t.id === currentId) || null;
+
+    const pool  = (shuffle && queue.length) ? queue : tracks;
+    const idx   = pool.findIndex(t => t.id === currentId);
+    const next  = (idx === -1) ? 0 : idx + 1;
+
+    if (repeat === 'all' || shuffle) return pool[next % pool.length];
+    return pool[next] || null;
   },
 
-  getPreviousTrack(currentTrackId, tracks, shuffleEnabled, shuffledQueue) {
+  getPrevTrack(currentId) {
+    const tracks  = AppState.getTracks();
+    const shuffle = AppState.isShuffleEnabled();
+    const queue   = AppState.getShuffledQueue();
     if (!tracks.length) return null;
-    
-    if (shuffleEnabled && shuffledQueue.length) {
-      const currentIndex = shuffledQueue.findIndex(t => t.id === currentTrackId);
-      if (currentIndex <= 0) return shuffledQueue[shuffledQueue.length - 1];
-      return shuffledQueue[currentIndex - 1];
-    }
-    
-    const currentIndex = tracks.findIndex(t => t.id === currentTrackId);
-    if (currentIndex <= 0) return tracks[tracks.length - 1];
-    return tracks[currentIndex - 1];
+
+    const pool = (shuffle && queue.length) ? queue : tracks;
+    const idx  = pool.findIndex(t => t.id === currentId);
+    const prev = (idx <= 0) ? pool.length - 1 : idx - 1;
+    return pool[prev] || null;
   },
 
-  preloadTrack(track) {
-    if (!track?.url) return null;
-    const audio = new Audio();
-    audio.preload = 'metadata';
-    audio.src = track.url;
-    return audio;
-  },
-
-  // Media Session API support
-  updateMediaSession(track, isPlaying) {
+  updateMediaSession(track, playing) {
     if (!('mediaSession' in navigator)) return;
-    
-    if (track) {
+    if (!track) return;
+    try {
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: track.name,
-        artist: track.artist || 'JamSync Artist',
-        album: 'JamSync',
-        artwork: track.albumArt ? [{ src: track.albumArt, sizes: '96x96', type: 'image/png' }] : []
+        title:  track.name,
+        artist: track.artist || 'JamSync',
+        album:  track.album  || 'JamSync',
       });
-      
-      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-    }
+      navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+    } catch {}
   },
-
-  handleAudioError(error, fallbackTrack = null) {
-    console.error('Audio error:', error);
-    
-    if (fallbackTrack) {
-      setTimeout(() => {
-        SocketManager.emitPlay({ trackId: fallbackTrack.id });
-      }, 1000);
-    }
-    
-    // Show user-friendly error (could be expanded)
-    const errorEl = document.getElementById('audioError');
-    if (errorEl) {
-      errorEl.textContent = 'Playback error. Trying next track...';
-      errorEl.style.display = 'block';
-      setTimeout(() => {
-        errorEl.style.display = 'none';
-      }, 3000);
-    }
-  }
 };
 
-// ============================================================================
-// DOM ELEMENTS CACHE (Optimized queries)
-// ============================================================================
+// ── DOM cache ─────────────────────────────────────────────────────────────────
 
 const DOM = {
-  audioPlayer: document.getElementById('audioPlayer'),
-  progressBar: document.getElementById('songProgress'),
-  currentTimeEl: document.getElementById('currentTime'),
-  totalTimeEl: document.getElementById('totalTime'),
-  playPauseBtn: document.getElementById('playPauseBtn'),
-  nextBtn: document.getElementById('nextBtn'),
-  prevBtn: document.getElementById('prevBtn'),
-  shuffleBtn: document.getElementById('shuffleBtn'),
-  repeatBtn: document.getElementById('repeatBtn'),
-  volumeSlider: document.getElementById('volumeSlider'),
-  volumeIcon: document.getElementById('volumeIcon'),
-  searchInput: document.getElementById('searchInput'),
-  musicList: document.getElementById('musicList'),
-  addToPlaylistBtn: document.getElementById('addToPlaylist'),
-  playlistSelect: document.getElementById('playlistSelect'),
-  currentTrackName: document.getElementById('currentTrackName'),
-  currentArtist: document.getElementById('currentArtist'),
-  playerAlbumArt: document.getElementById('playerAlbumArt'),
-  nowPlayingMobile: document.querySelector('#nowPlayingMobile span'),
-  progressContainer: document.querySelector('.progress-bar'),
-  trackCount: document.getElementById('trackCount'),
-  likeBtn: document.getElementById('likeBtn'),
-  volumeContainer: document.querySelector('.volume-control'),
-  audioError: document.getElementById('audioError')
+  audio:           document.getElementById('audioPlayer'),
+  progressBar:     document.getElementById('songProgress'),
+  progressWrap:    document.querySelector('.progress-bar'),
+  currentTime:     document.getElementById('currentTime'),
+  totalTime:       document.getElementById('totalTime'),
+  playPauseBtn:    document.getElementById('playPauseBtn'),
+  nextBtn:         document.getElementById('nextBtn'),
+  prevBtn:         document.getElementById('prevBtn'),
+  shuffleBtn:      document.getElementById('shuffleBtn'),
+  repeatBtn:       document.getElementById('repeatBtn'),
+  likeBtn:         document.getElementById('likeBtn'),
+  volumeSlider:    document.getElementById('volumeSlider'),
+  volumeIcon:      document.getElementById('volumeIcon'),
+  searchInput:     document.getElementById('searchInput'),
+  musicList:       document.getElementById('musicList'),
+  addToPlaylist:   document.getElementById('addToPlaylist'),
+  playlistSelect:  document.getElementById('playlistSelect'),
+  trackName:       document.getElementById('currentTrackName'),
+  artistName:      document.getElementById('currentArtist'),
+  albumArt:        document.getElementById('playerAlbumArt'),
+  mobileNP:        document.querySelector('#nowPlayingMobile span'),
+  trackCount:      document.getElementById('trackCount'),
+  audioError:      document.getElementById('audioError'),
 };
 
-// ============================================================================
-// UI RENDERER (Targeted updates only)
-// ============================================================================
+// ── UI Renderer ───────────────────────────────────────────────────────────────
 
-const UIRenderer = (() => {
-  let activeTrackElement = null;
-  
-  function updateActiveTrackElement() {
-    const currentTrack = AppState.getCurrentTrack();
-    if (!currentTrack) return;
-    
-    // Remove active class from previous active track
-    if (activeTrackElement) {
-      activeTrackElement.classList.remove('active', 'playing');
-    }
-    
-    // Find and update new active track
-    activeTrackElement = document.querySelector(`.track[data-id="${currentTrack.id}"]`);
-    if (activeTrackElement) {
-      activeTrackElement.classList.add('active');
-      if (AppState.isPlaying()) {
-        activeTrackElement.classList.add('playing');
-      }
-    }
-  }
+const UI = (() => {
+  let activeEl = null;
 
-  function renderTrackList(trackList) {
-    const musicList = DOM.musicList;
-    if (!musicList) return;
-    
-    const fragment = document.createDocumentFragment();
-    const currentTrack = AppState.getCurrentTrack();
-    const isPlaying = AppState.isPlaying();
-    
-    trackList.forEach((track, index) => {
-      const trackEl = document.createElement('div');
-      trackEl.className = 'track';
-      if (currentTrack?.id === track.id) {
-        trackEl.classList.add('active');
-        if (isPlaying) {
-          trackEl.classList.add('playing');
-        }
-        activeTrackElement = trackEl;
+  function renderTrackList(list) {
+    const frag = document.createDocumentFragment();
+    const cur  = AppState.getCurrentTrack();
+    const playing = AppState.isPlaying();
+
+    list.forEach((track, i) => {
+      const el = document.createElement('div');
+      el.className  = 'track';
+      el.dataset.id = track.id;
+
+      const isCurrent = cur?.id === track.id;
+      if (isCurrent) {
+        el.classList.add('active');
+        if (playing) el.classList.add('playing');
+        activeEl = el;
       }
-      trackEl.dataset.id = track.id;
-      
-      trackEl.innerHTML = `
+
+      el.innerHTML = `
         <div class="track-idx">
-          <span class="track-num">${index + 1}</span>
+          <span class="track-num">${i + 1}</span>
           <div class="track-wave">
-            <span class="bar"></span>
-            <span class="bar"></span>
-            <span class="bar"></span>
-            <span class="bar"></span>
+            <span class="bar"></span><span class="bar"></span>
+            <span class="bar"></span><span class="bar"></span>
           </div>
         </div>
-        <div class="track-thumb">${track.albumArt || '🎵'}</div>
+        <div class="track-thumb">${track.albumArt}</div>
         <div class="track-info">
-          <div class="track-title">${track.name}</div>
+          <div class="track-title">${escHtml(track.name)}</div>
           <div class="track-meta">
-            <span>${track.artist || 'Unknown Artist'}</span>
+            <span>${escHtml(track.artist)}</span>
             <span class="dur">${track.duration ? AppUtils.formatTime(track.duration) : '--:--'}</span>
           </div>
         </div>
         <div class="track-likes">
-          <i class="fa-${AppState.isLiked(track.id) ? 'solid' : 'regular'} fa-heart"></i>
+          <i class="${AppState.isLiked(track.id) ? 'fas' : 'far'} fa-heart"></i>
           <span>${track.likes || 0}</span>
-        </div>
-      `;
-      
-      fragment.appendChild(trackEl);
+        </div>`;
+
+      frag.appendChild(el);
     });
-    
-    // Batch DOM update
-    musicList.innerHTML = '';
-    musicList.appendChild(fragment);
-    
-    // Update track count
-    if (DOM.trackCount) {
-      DOM.trackCount.textContent = trackList.length;
-    }
+
+    DOM.musicList.innerHTML = '';
+    DOM.musicList.appendChild(frag);
+    if (DOM.trackCount) DOM.trackCount.textContent = list.length;
   }
 
-  function updateNowPlayingUI() {
-    const currentTrack = AppState.getCurrentTrack();
-    
-    if (currentTrack) {
-      // Desktop
-      if (DOM.currentTrackName) DOM.currentTrackName.textContent = currentTrack.name;
-      if (DOM.currentArtist) DOM.currentArtist.textContent = currentTrack.artist || 'JamSync';
-      
-      // Mobile
-      if (DOM.nowPlayingMobile) DOM.nowPlayingMobile.textContent = currentTrack.name;
-      
-      // Album art
-      if (DOM.playerAlbumArt) DOM.playerAlbumArt.textContent = currentTrack.albumArt || '🎵';
-      
-      // Like button
-      if (DOM.likeBtn) {
-        const icon = DOM.likeBtn.querySelector('i');
-        if (icon) {
-          icon.className = AppState.isLiked(currentTrack.id) ? 'fas fa-heart' : 'far fa-heart';
-        }
-      }
+  function updateNowPlaying() {
+    const t = AppState.getCurrentTrack();
+    if (t) {
+      if (DOM.trackName)  DOM.trackName.textContent  = t.name;
+      if (DOM.artistName) DOM.artistName.textContent = t.artist || 'JamSync';
+      if (DOM.albumArt)   DOM.albumArt.textContent   = t.albumArt || '🎵';
+      if (DOM.mobileNP)   DOM.mobileNP.textContent   = t.name;
+      updateLikeBtn(t.id);
     } else {
-      if (DOM.currentTrackName) DOM.currentTrackName.textContent = 'Not Playing';
-      if (DOM.currentArtist) DOM.currentArtist.textContent = 'Select a track';
-      if (DOM.nowPlayingMobile) DOM.nowPlayingMobile.textContent = 'Select a track';
-      if (DOM.playerAlbumArt) DOM.playerAlbumArt.textContent = '🎵';
+      if (DOM.trackName)  DOM.trackName.textContent  = 'Not Playing';
+      if (DOM.artistName) DOM.artistName.textContent = 'Select a track';
+      if (DOM.albumArt)   DOM.albumArt.textContent   = '🎵';
+      if (DOM.mobileNP)   DOM.mobileNP.textContent   = 'Select a track';
     }
   }
 
-  function updatePlayPauseButton(isPlaying) {
-    if (DOM.playPauseBtn) {
-      DOM.playPauseBtn.innerHTML = isPlaying ? 
-        '<i class="fas fa-pause"></i>' : 
-        '<i class="fas fa-play" style="margin-left:2px;"></i>';
+  function updateActiveTrack() {
+    if (activeEl) activeEl.classList.remove('active', 'playing');
+    const cur = AppState.getCurrentTrack();
+    if (!cur) return;
+    activeEl = document.querySelector(`.track[data-id="${cur.id}"]`);
+    if (activeEl) {
+      activeEl.classList.add('active');
+      if (AppState.isPlaying()) activeEl.classList.add('playing');
     }
   }
 
-  function updateProgressBar() {
-    const audioPlayer = DOM.audioPlayer;
-    if (!audioPlayer || !audioPlayer.duration) return;
-    
-    const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
-    if (DOM.progressBar) {
-      DOM.progressBar.style.width = `${progress}%`;
-    }
-    if (DOM.currentTimeEl) {
-      DOM.currentTimeEl.textContent = AppUtils.formatTime(audioPlayer.currentTime);
+  function updatePlayPause(playing) {
+    if (!DOM.playPauseBtn) return;
+    DOM.playPauseBtn.innerHTML = playing
+      ? '<i class="fas fa-pause"></i>'
+      : '<i class="fas fa-play" style="margin-left:2px"></i>';
+  }
+
+  function updateProgress() {
+    const a = DOM.audio;
+    if (!a?.duration) return;
+    const pct = (a.currentTime / a.duration) * 100;
+    if (DOM.progressBar)  DOM.progressBar.style.width = `${pct}%`;
+    if (DOM.currentTime)  DOM.currentTime.textContent = AppUtils.formatTime(a.currentTime);
+  }
+
+  function updateTotalTime(dur) {
+    if (DOM.totalTime) DOM.totalTime.textContent = AppUtils.formatTime(dur);
+  }
+
+  function updateVolume(v) {
+    if (DOM.volumeSlider) DOM.volumeSlider.value = v;
+    if (DOM.volumeIcon) {
+      DOM.volumeIcon.className = v === 0 ? 'fas fa-volume-off'
+                               : v < 0.5 ? 'fas fa-volume-low'
+                               : 'fas fa-volume-high';
     }
   }
 
-  function updateTotalTime(duration) {
-    if (DOM.totalTimeEl) {
-      DOM.totalTimeEl.textContent = AppUtils.formatTime(duration);
+  function updateShuffle(on) {
+    if (DOM.shuffleBtn) {
+      DOM.shuffleBtn.classList.toggle('active', on);
+      DOM.shuffleBtn.setAttribute('aria-pressed', on);
     }
+  }
+
+  function updateRepeat(mode) {
+    if (!DOM.repeatBtn) return;
+    const icon = DOM.repeatBtn.querySelector('i');
+    const active = mode !== 'none';
+    DOM.repeatBtn.classList.toggle('active', active);
+    DOM.repeatBtn.setAttribute('aria-pressed', active);
+    if (icon) {
+      icon.className = mode === 'one' ? 'fas fa-1 fa-repeat' : 'fas fa-repeat';
+      // note: fa-repeat-1 may not exist in all FA versions
+      icon.className = 'fas fa-repeat';
+      DOM.repeatBtn.title = `Repeat: ${mode}`;
+      DOM.repeatBtn.querySelector('i').style.color = active ? '' : '';
+    }
+  }
+
+  function updateLikeBtn(trackId) {
+    if (!DOM.likeBtn) return;
+    const liked = AppState.isLiked(trackId);
+    const icon  = DOM.likeBtn.querySelector('i');
+    if (icon) icon.className = liked ? 'fas fa-heart' : 'far fa-heart';
+    DOM.likeBtn.setAttribute('aria-pressed', liked);
   }
 
   function updatePlaylistDropdown() {
     if (!DOM.playlistSelect) return;
-    
-    const playlists = AppState.getPlaylists();
-    DOM.playlistSelect.innerHTML = '';
-    
-    Object.keys(playlists).forEach(playlistName => {
-      const option = document.createElement('option');
-      option.value = playlistName;
-      option.textContent = playlistName.charAt(0).toUpperCase() + playlistName.slice(1);
-      DOM.playlistSelect.appendChild(option);
-    });
+    const names = Object.keys(AppState.getPlaylists());
+    DOM.playlistSelect.innerHTML = names.map(n =>
+      `<option value="${escHtml(n)}">${escHtml(n.charAt(0).toUpperCase() + n.slice(1))}</option>`
+    ).join('');
   }
 
-  function updateVolumeUI(volume) {
-    if (DOM.volumeSlider) {
-      DOM.volumeSlider.value = volume;
-    }
-    if (DOM.volumeIcon) {
-      if (volume === 0) {
-        DOM.volumeIcon.className = 'fas fa-volume-mute';
-      } else if (volume < 0.5) {
-        DOM.volumeIcon.className = 'fas fa-volume-down';
-      } else {
-        DOM.volumeIcon.className = 'fas fa-volume-up';
-      }
-    }
+  function showError(msg) {
+    if (!DOM.audioError) return;
+    if (!msg) { DOM.audioError.style.display = 'none'; return; }
+    DOM.audioError.style.display = 'inline-flex';
+    DOM.audioError.innerHTML = `<i class="fas fa-circle-exclamation" style="font-size:.7rem"></i> ${escHtml(msg)}`;
   }
 
-  function updateRepeatButton(mode) {
-    if (!DOM.repeatBtn) return;
-    
-    const icon = DOM.repeatBtn.querySelector('i');
-    if (icon) {
-      switch(mode) {
-        case 'one':
-          icon.className = 'fas fa-repeat-1';
-          DOM.repeatBtn.classList.add('active');
-          break;
-        case 'all':
-          icon.className = 'fas fa-repeat';
-          DOM.repeatBtn.classList.add('active');
-          break;
-        default:
-          icon.className = 'fas fa-repeat';
-          DOM.repeatBtn.classList.remove('active');
-      }
-    }
-  }
-
-  function updateShuffleButton(enabled) {
-    if (DOM.shuffleBtn) {
-      if (enabled) {
-        DOM.shuffleBtn.classList.add('active');
-      } else {
-        DOM.shuffleBtn.classList.remove('active');
-      }
-    }
+  function escHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
   return {
-    renderTrackList,
-    updateNowPlayingUI,
-    updatePlayPauseButton,
-    updateProgressBar,
-    updateTotalTime,
-    updatePlaylistDropdown,
-    updateVolumeUI,
-    updateRepeatButton,
-    updateShuffleButton,
-    updateActiveTrackElement
+    renderTrackList, updateNowPlaying, updateActiveTrack,
+    updatePlayPause, updateProgress, updateTotalTime,
+    updateVolume, updateShuffle, updateRepeat, updateLikeBtn,
+    updatePlaylistDropdown, showError,
   };
 })();
 
-// ============================================================================
-// AUDIO PLAYER MANAGER
-// ============================================================================
+// ── Audio Manager ─────────────────────────────────────────────────────────────
 
-const AudioManager = (() => {
+const Audio = (() => {
   function init() {
-    const audioPlayer = DOM.audioPlayer;
-    if (!audioPlayer) return;
-    
-    // Set initial volume
-    audioPlayer.volume = AppState.getVolume();
-    
-    // Event listeners
-    audioPlayer.addEventListener('timeupdate', onTimeUpdate);
-    audioPlayer.addEventListener('play', onPlay);
-    audioPlayer.addEventListener('pause', onPause);
-    audioPlayer.addEventListener('ended', onEnded);
-    audioPlayer.addEventListener('error', onError);
-    audioPlayer.addEventListener('loadedmetadata', onLoadedMetadata);
-    audioPlayer.addEventListener('waiting', onWaiting);
-    audioPlayer.addEventListener('canplay', onCanPlay);
+    const a = DOM.audio;
+    if (!a) return;
+
+    a.volume = AppState.getVolume();
+
+    a.addEventListener('timeupdate',    onTimeUpdate);
+    a.addEventListener('play',          onPlay);
+    a.addEventListener('pause',         onPause);
+    a.addEventListener('ended',         onEnded);
+    a.addEventListener('error',         onError);
+    a.addEventListener('loadedmetadata', onMeta);
+    a.addEventListener('waiting',       () => UI.showError('Buffering…'));
+    a.addEventListener('canplay',       () => UI.showError(null));
+    a.addEventListener('stalled',       () => UI.showError('Stalled – check connection'));
   }
 
   function onTimeUpdate() {
-    UIRenderer.updateProgressBar();
-    
-    // Sync with server periodically
-    const audioPlayer = DOM.audioPlayer;
-    if (!AppState.isUserInteracting() && 
-        audioPlayer.currentTime % 5 < 0.1 && // Every ~5 seconds
-        AppState.getCurrentTrack()) {
-      SocketManager.emitSync(audioPlayer.currentTime, !audioPlayer.paused);
-      AppState.updateSyncTime();
-    }
+    UI.updateProgress();
   }
 
   function onPlay() {
     AppState.setIsPlaying(true);
-    UIRenderer.updatePlayPauseButton(true);
-    UIRenderer.updateActiveTrackElement();
+    UI.updatePlayPause(true);
+    UI.updateActiveTrack();
     AppUtils.updateMediaSession(AppState.getCurrentTrack(), true);
-    
-    // Preload next track
-    const currentTrack = AppState.getCurrentTrack();
-    if (currentTrack) {
-      const nextTrack = AppUtils.getNextTrack(
-        currentTrack.id,
-        AppState.getTracks(),
-        AppState.getRepeatMode(),
-        AppState.isShuffleEnabled(),
-        AppState.getShuffledQueue()
-      );
-      if (nextTrack) {
-        const preloaded = AppUtils.preloadTrack(nextTrack);
-        AppState.setPreloadedAudio(preloaded);
-      }
-    }
+    DOM.albumArt?.classList.add('playing-glow');
   }
 
   function onPause() {
     AppState.setIsPlaying(false);
-    UIRenderer.updatePlayPauseButton(false);
-    UIRenderer.updateActiveTrackElement();
+    UI.updatePlayPause(false);
+    UI.updateActiveTrack();
     AppUtils.updateMediaSession(AppState.getCurrentTrack(), false);
+    DOM.albumArt?.classList.remove('playing-glow');
   }
 
   function onEnded() {
-    const currentTrack = AppState.getCurrentTrack();
-    const tracks = AppState.getTracks();
-    const repeatMode = AppState.getRepeatMode();
-    const shuffleEnabled = AppState.isShuffleEnabled();
-    const shuffledQueue = AppState.getShuffledQueue();
-    
-    if (repeatMode === 'one') {
-      // Replay current track
-      SocketManager.emitPlay({ trackId: currentTrack.id });
+    DOM.albumArt?.classList.remove('playing-glow');
+    const cur    = AppState.getCurrentTrack();
+    const repeat = AppState.getRepeatMode();
+
+    if (repeat === 'one' && cur) {
+      Sock.play(cur.id);
+      return;
+    }
+    const next = AppUtils.getNextTrack(cur?.id);
+    if (next) {
+      Sock.play(next.id);
     } else {
-      const nextTrack = AppUtils.getNextTrack(
-        currentTrack?.id,
-        tracks,
-        repeatMode,
-        shuffleEnabled,
-        shuffledQueue
-      );
-      
-      if (nextTrack) {
-        SocketManager.emitPlay({ trackId: nextTrack.id });
-      } else {
-        SocketManager.emitTrackEnded();
-      }
+      Sock.trackEnded();
     }
   }
 
   function onError(e) {
-    const currentTrack = AppState.getCurrentTrack();
-    const tracks = AppState.getTracks();
-    
-    // Try to play next track as fallback
-    if (currentTrack) {
-      const nextTrack = AppUtils.getNextTrack(
-        currentTrack.id,
-        tracks,
-        'all',
-        false,
-        []
-      );
-      AppUtils.handleAudioError(e, nextTrack);
-    }
+    const code = DOM.audio?.error?.code;
+    const msgs = { 1:'Aborted', 2:'Network error', 3:'Decode error', 4:'Format not supported' };
+    UI.showError(`Playback error: ${msgs[code] || 'Unknown'}`);
+    console.error('[audio] error code', code, e);
+
+    // Auto-advance after error
+    setTimeout(() => {
+      const next = AppUtils.getNextTrack(AppState.getCurrentTrack()?.id);
+      if (next) Sock.play(next.id);
+    }, 1500);
   }
 
-  function onLoadedMetadata() {
-    const audioPlayer = DOM.audioPlayer;
-    if (!audioPlayer) return;
-    
-    const currentTrack = AppState.getCurrentTrack();
-    if (currentTrack) {
-      SocketManager.emitDuration(currentTrack.id, audioPlayer.duration);
-      UIRenderer.updateTotalTime(audioPlayer.duration);
-    }
+  function onMeta() {
+    const a = DOM.audio;
+    const t = AppState.getCurrentTrack();
+    if (!a || !t) return;
+    UI.updateTotalTime(a.duration);
+    Sock.duration(t.id, a.duration);
   }
 
-  function onWaiting() {
-    // Show buffering indicator
-    if (DOM.audioError) {
-      DOM.audioError.textContent = 'Buffering...';
-      DOM.audioError.style.display = 'block';
-    }
-  }
+  function loadTrack(track, position = 0, play = false) {
+    const a = DOM.audio;
+    if (!a || !track?.url) return;
 
-  function onCanPlay() {
-    if (DOM.audioError) {
-      DOM.audioError.style.display = 'none';
-    }
-  }
-
-  function loadTrack(track, position = 0, shouldPlay = false) {
-    const audioPlayer = DOM.audioPlayer;
-    if (!audioPlayer || !track) return;
-    
     AppState.setCurrentTrack(track);
-    window.__currentTrackId = track.id;
-    
-    audioPlayer.src = track.url;
-    
-    // Immediate UI update
-    UIRenderer.updateNowPlayingUI();
-    UIRenderer.updateActiveTrackElement();
-    
-    audioPlayer.onloadedmetadata = () => {
-      audioPlayer.currentTime = position;
-      UIRenderer.updateTotalTime(audioPlayer.duration);
-      
-      if (shouldPlay) {
-        audioPlayer.play().catch(e => AppUtils.handleAudioError(e));
-      }
-    };
+    window.__currentTrackId = track.id; // expose for legacy inline script
+
+    a.src = track.url;
+    a.load();
+
+    UI.updateNowPlaying();
+    UI.updateActiveTrack();
+
+    a.addEventListener('loadedmetadata', function handler() {
+      a.removeEventListener('loadedmetadata', handler);
+      a.currentTime = Math.max(0, position);
+      if (play) a.play().catch(err => console.warn('[audio] autoplay blocked:', err.message));
+    }, { once: true });
   }
 
-  function seek(position) {
-    const audioPlayer = DOM.audioPlayer;
-    if (!audioPlayer || !audioPlayer.duration) return;
-    
-    const seekTime = Math.max(0, Math.min(position, audioPlayer.duration));
-    const wasPlaying = !audioPlayer.paused;
-    
-    if (wasPlaying) {
-      audioPlayer.pause();
-    }
-    
-    audioPlayer.currentTime = seekTime;
-    
-    if (wasPlaying) {
-      audioPlayer.play().catch(e => AppUtils.handleAudioError(e));
-    }
+  function seek(pos) {
+    const a = DOM.audio;
+    if (!a?.duration) return;
+    a.currentTime = Math.max(0, Math.min(pos, a.duration));
   }
 
-  function setVolume(volume) {
-    const audioPlayer = DOM.audioPlayer;
-    if (!audioPlayer) return;
-    
-    AppState.setVolume(volume);
-    audioPlayer.volume = volume;
-    UIRenderer.updateVolumeUI(volume);
+  function setVolume(v) {
+    const a = DOM.audio;
+    if (!a) return;
+    AppState.setVolume(v);
+    a.volume = AppState.getVolume();
+    UI.updateVolume(AppState.getVolume());
   }
 
   function togglePlay() {
-    const audioPlayer = DOM.audioPlayer;
-    const currentTrack = AppState.getCurrentTrack();
-    
-    if (!currentTrack) {
-      const tracks = AppState.getTracks();
-      if (tracks.length > 0) {
-        SocketManager.emitPlay({ trackId: tracks[0].id });
-      }
+    const a   = DOM.audio;
+    const cur = AppState.getCurrentTrack();
+    const tracks = AppState.getTracks();
+
+    if (!cur) {
+      if (tracks.length) Sock.play(tracks[0].id);
       return;
     }
-    
-    AppState.setIsUserInteracting(true);
-    
-    if (audioPlayer.paused) {
-      SocketManager.emitPlay({ trackId: currentTrack.id });
-      audioPlayer.play().catch(e => AppUtils.handleAudioError(e));
+
+    AppState.setInteracting();
+    if (a.paused) {
+      Sock.play(cur.id);
+      a.play().catch(err => console.warn('[audio] play blocked:', err.message));
     } else {
-      SocketManager.emitPause();
-      audioPlayer.pause();
+      Sock.pause();
+      a.pause();
     }
   }
 
-  return {
-    init,
-    loadTrack,
-    seek,
-    setVolume,
-    togglePlay
-  };
+  return { init, loadTrack, seek, setVolume, togglePlay };
 })();
 
-// ============================================================================
-// SOCKET MANAGER
-// ============================================================================
+// ── Socket communication ──────────────────────────────────────────────────────
 
-const SocketManager = (() => {
-  function emitPlay({ trackId }) {
-    socket.emit('play', { trackId });
+// `socket` is injected by initializeApp()
+let _socket = null;
+
+const Sock = {
+  play(trackId)          { _socket?.emit('play',          { trackId }); },
+  pause()                { _socket?.emit('pause'); },
+  next()                 { _socket?.emit('next'); },
+  previous()             { _socket?.emit('previous'); },
+  seek(pos)              { _socket?.emit('seek',          { position: pos }); },
+  duration(id, dur)      { _socket?.emit('duration',      { trackId: id, duration: dur }); },
+  trackEnded()           { _socket?.emit('track-ended'); },
+  addToPlaylist(name,id) { _socket?.emit('add-to-playlist', { playlistName: name, trackId: id }); },
+
+  // ── Listeners ──────────────────────────────────────────────────────────────
+  init(socket) {
+    _socket = socket;
+
+    socket.on('init', ({ tracks: serverTracks, playlists: serverPlaylists, currentState }) => {
+      AppState.setTracks(serverTracks || []);
+      AppState.setFilteredTracks(AppState.getTracks());
+      AppState.setPlaylists(serverPlaylists || {});
+
+      UI.renderTrackList(AppState.getFilteredTracks());
+      UI.updatePlaylistDropdown();
+
+      if (currentState?.currentTrack) {
+        Audio.loadTrack(
+          currentState.currentTrack,
+          currentState.position  || 0,
+          currentState.isPlaying || false,
+        );
+      }
+
+      // Show empty-state message if no tracks
+      if (!AppState.getTracks().length) {
+        DOM.musicList.innerHTML = `
+          <div style="text-align:center;padding:40px 20px;color:var(--muted);font-size:.85rem;line-height:1.7">
+            <div style="font-size:2.5rem;margin-bottom:12px">🎵</div>
+            No tracks found.<br>
+            Add <code style="color:var(--lime)">.mp3</code> files to the <code style="color:var(--lime)">public/music/</code> folder on the server.
+          </div>`;
+        if (DOM.trackCount) DOM.trackCount.textContent = '0';
+      }
+    });
+
+    socket.on('track-changed', ({ track, position, isPlaying }) => {
+      Audio.loadTrack(track, position, isPlaying);
+    });
+
+    socket.on('pause', ({ position }) => {
+      if (AppState.isInteracting()) return;
+      const a = DOM.audio;
+      if (!a) return;
+      a.currentTime = position;
+      a.pause();
+    });
+
+    socket.on('seek', ({ position }) => {
+      if (AppState.isInteracting()) return;
+      Audio.seek(position);
+    });
+
+    socket.on('sync', ({ position, isPlaying, currentTrack }) => {
+      // Reconcile track if different
+      const cur = AppState.getCurrentTrack();
+      if (currentTrack && cur?.id !== currentTrack.id) {
+        Audio.loadTrack(currentTrack, position, isPlaying);
+        return;
+      }
+
+      if (!AppState.shouldSync(position)) return;
+      const a = DOM.audio;
+      if (!a) return;
+
+      a.currentTime = position;
+      if (isPlaying && a.paused)  a.play().catch(() => {});
+      if (!isPlaying && !a.paused) a.pause();
+      AppState.markSynced();
+    });
+
+    socket.on('playlist-updated', ({ playlistName, playlists }) => {
+      AppState.setPlaylists(playlists);
+      UI.updatePlaylistDropdown();
+      const cur = AppState.getCurrentTrack();
+      if (cur) {
+        // Toast notification
+        showToast(`"${cur.name}" added to ${playlistName}`);
+      }
+    });
+
+    socket.on('room-error', ({ message }) => {
+      console.warn('[room] error:', message);
+    });
+  },
+};
+
+// ── Toast notification ────────────────────────────────────────────────────────
+
+function showToast(msg, duration = 2800) {
+  let toast = document.getElementById('jsToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'jsToast';
+    toast.style.cssText = `
+      position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(16px);
+      background:var(--ink3);border:1px solid var(--lime);border-radius:40px;
+      padding:10px 22px;font-size:.8rem;color:var(--lime);
+      font-family:'Space Mono',monospace;letter-spacing:.05em;
+      opacity:0;transition:opacity .2s,transform .2s;z-index:9999;pointer-events:none;
+      white-space:nowrap;
+    `;
+    document.body.appendChild(toast);
   }
-
-  function emitPause() {
-    socket.emit('pause');
-  }
-
-  function emitNext() {
-    socket.emit('next');
-  }
-
-  function emitPrevious() {
-    socket.emit('previous');
-  }
-
-  function emitSeek(position) {
-    socket.emit('seek', { position });
-  }
-
-  function emitSync(position, isPlaying) {
-    socket.emit('sync', { position, isPlaying });
-  }
-
-  function emitDuration(trackId, duration) {
-    socket.emit('duration', { trackId, duration });
-  }
-
-  function emitTrackEnded() {
-    socket.emit('track-ended');
-  }
-
-  function emitAddToPlaylist(playlistName, trackId) {
-    socket.emit('add-to-playlist', { playlistName, trackId });
-  }
-
-  function init() {
-    // Initialize socket listeners
-    socket.on('init', handleInit);
-    socket.on('track-changed', handleTrackChanged);
-    socket.on('pause', handlePause);
-    socket.on('seek', handleSeek);
-    socket.on('sync', handleSync);
-    socket.on('playlist-updated', handlePlaylistUpdated);
-  }
-
-  function handleInit({ tracks: serverTracks, playlists: serverPlaylists, currentState }) {
-    AppState.setTracks(serverTracks);
-    AppState.setFilteredTracks(AppState.getTracks());
-    AppState.setPlaylists(serverPlaylists);
-    
-    UIRenderer.renderTrackList(AppState.getFilteredTracks());
-    UIRenderer.updatePlaylistDropdown();
-    
-    if (currentState?.currentTrack) {
-      AudioManager.loadTrack(
-        currentState.currentTrack,
-        currentState.position || 0,
-        currentState.isPlaying || false
-      );
-    }
-  }
-
-  function handleTrackChanged({ track, position, isPlaying }) {
-    AudioManager.loadTrack(track, position, isPlaying);
-  }
-
-  function handlePause({ position }) {
-    if (AppState.isUserInteracting()) return;
-    
-    const audioPlayer = DOM.audioPlayer;
-    audioPlayer.currentTime = position;
-    audioPlayer.pause();
-  }
-
-  function handleSeek({ position }) {
-    if (AppState.isUserInteracting()) return;
-    
-    DOM.audioPlayer.currentTime = position;
-  }
-
-  function handleSync({ position, isPlaying }) {
-    if (!AppState.shouldSync(position)) return;
-    
-    const audioPlayer = DOM.audioPlayer;
-    audioPlayer.currentTime = position;
-    
-    if (isPlaying && audioPlayer.paused) {
-      audioPlayer.play().catch(e => AppUtils.handleAudioError(e));
-    } else if (!isPlaying && !audioPlayer.paused) {
-      audioPlayer.pause();
-    }
-    
-    AppState.updateSyncTime();
-  }
-
-  function handlePlaylistUpdated({ playlistName, playlists: updatedPlaylists }) {
-    AppState.setPlaylists(updatedPlaylists);
-    
-    const currentTrack = AppState.getCurrentTrack();
-    if (currentTrack) {
-      alert(`"${currentTrack.name}" added to ${playlistName} playlist!`);
-    }
-  }
-
-  return {
-    init,
-    emitPlay,
-    emitPause,
-    emitNext,
-    emitPrevious,
-    emitSeek,
-    emitSync,
-    emitDuration,
-    emitTrackEnded,
-    emitAddToPlaylist
-  };
-})();
-
-// ============================================================================
-// EVENT HANDLERS
-// ============================================================================
-
-// Search handler with debounce
-if (DOM.searchInput) {
-  DOM.searchInput.addEventListener('input', AppUtils.debounce((e) => {
-    const searchTerm = e.target.value.toLowerCase().trim();
-    const tracks = AppState.getTracks();
-    
-    let filtered;
-    if (searchTerm === '') {
-      filtered = [...tracks];
-    } else {
-      filtered = tracks.filter(track => 
-        track.name.toLowerCase().includes(searchTerm) ||
-        (track.artist && track.artist.toLowerCase().includes(searchTerm))
-      );
-    }
-    
-    AppState.setFilteredTracks(filtered);
-    UIRenderer.renderTrackList(filtered);
-  }, 300));
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  toast.style.transform = 'translateX(-50%) translateY(0)';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(16px)';
+  }, duration);
 }
 
-// Track click handler
-if (DOM.musicList) {
-  DOM.musicList.addEventListener('click', (e) => {
-    const trackEl = e.target.closest('.track');
-    if (!trackEl) return;
-    
-    const trackId = trackEl.dataset.id;
-    const track = AppState.getTracks().find(t => t.id === trackId);
+// ── Event handlers ────────────────────────────────────────────────────────────
+
+function attachEventHandlers() {
+  // Track click
+  DOM.musicList?.addEventListener('click', (e) => {
+    const el = e.target.closest('.track');
+    if (!el) return;
+    const track = AppState.getTracks().find(t => t.id === el.dataset.id);
     if (!track) return;
-    
-    AppState.setIsUserInteracting(true);
+
+    AppState.setInteracting();
     AppState.setCurrentTrack(track);
-    
-    UIRenderer.updateNowPlayingUI();
-    UIRenderer.updateActiveTrackElement();
-    
-    SocketManager.emitPlay({ trackId: track.id });
+    UI.updateNowPlaying();
+    UI.updateActiveTrack();
+    Sock.play(track.id);
   });
-}
 
-// Like button handler
-if (DOM.likeBtn) {
-  DOM.likeBtn.addEventListener('click', () => {
-    const currentTrack = AppState.getCurrentTrack();
-    if (!currentTrack) return;
-    
-    const isLiked = AppState.toggleLike(currentTrack.id);
-    
-    const icon = DOM.likeBtn.querySelector('i');
-    if (icon) {
-      icon.className = isLiked ? 'fas fa-heart' : 'far fa-heart';
-    }
-    
-    // Update track list like icon
-    const trackElement = document.querySelector(`.track[data-id="${currentTrack.id}"] .track-likes i`);
-    if (trackElement) {
-      trackElement.className = isLiked ? 'fas fa-heart' : 'far fa-heart';
-    }
+  // Play / Pause
+  DOM.playPauseBtn?.addEventListener('click', Audio.togglePlay);
+
+  // Next / Previous
+  DOM.nextBtn?.addEventListener('click', () => {
+    AppState.setInteracting();
+    Sock.next();
   });
-}
-
-// Playlist add handler
-if (DOM.addToPlaylistBtn) {
-  DOM.addToPlaylistBtn.addEventListener('click', () => {
-    const currentTrack = AppState.getCurrentTrack();
-    if (!currentTrack) return;
-    
-    const playlistName = DOM.playlistSelect?.value;
-    if (playlistName) {
-      SocketManager.emitAddToPlaylist(playlistName, currentTrack.id);
-    }
+  DOM.prevBtn?.addEventListener('click', () => {
+    AppState.setInteracting();
+    Sock.previous();
   });
-}
 
-// Player control handlers
-if (DOM.playPauseBtn) {
-  DOM.playPauseBtn.addEventListener('click', AudioManager.togglePlay);
-}
-
-if (DOM.nextBtn) {
-  DOM.nextBtn.addEventListener('click', () => {
-    AppState.setIsUserInteracting(true);
-    SocketManager.emitNext();
+  // Shuffle
+  DOM.shuffleBtn?.addEventListener('click', () => {
+    const on = !AppState.isShuffleEnabled();
+    AppState.setShuffleEnabled(on);
+    UI.updateShuffle(on);
   });
-}
 
-if (DOM.prevBtn) {
-  DOM.prevBtn.addEventListener('click', () => {
-    AppState.setIsUserInteracting(true);
-    SocketManager.emitPrevious();
-  });
-}
-
-// Shuffle handler
-if (DOM.shuffleBtn) {
-  DOM.shuffleBtn.addEventListener('click', () => {
-    const enabled = !AppState.isShuffleEnabled();
-    AppState.setShuffleEnabled(enabled);
-    UIRenderer.updateShuffleButton(enabled);
-  });
-}
-
-// Repeat handler
-if (DOM.repeatBtn) {
-  DOM.repeatBtn.addEventListener('click', () => {
+  // Repeat
+  DOM.repeatBtn?.addEventListener('click', () => {
     const modes = ['none', 'one', 'all'];
-    const currentMode = AppState.getRepeatMode();
-    const nextMode = modes[(modes.indexOf(currentMode) + 1) % modes.length];
-    
-    AppState.setRepeatMode(nextMode);
-    UIRenderer.updateRepeatButton(nextMode);
+    const next  = modes[(modes.indexOf(AppState.getRepeatMode()) + 1) % modes.length];
+    AppState.setRepeatMode(next);
+    UI.updateRepeat(next);
+    showToast(`Repeat: ${next}`);
   });
-}
 
-// Volume handler
-if (DOM.volumeSlider) {
-  DOM.volumeSlider.addEventListener('input', (e) => {
-    const volume = parseFloat(e.target.value);
-    AudioManager.setVolume(volume);
+  // Like
+  DOM.likeBtn?.addEventListener('click', () => {
+    const cur = AppState.getCurrentTrack();
+    if (!cur) return;
+    const liked = AppState.toggleLike(cur.id);
+    UI.updateLikeBtn(cur.id);
+    showToast(liked ? '❤️ Liked' : '🤍 Unliked');
   });
-}
 
-if (DOM.volumeIcon) {
-  DOM.volumeIcon.addEventListener('click', () => {
-    const currentVolume = AppState.getVolume();
-    AudioManager.setVolume(currentVolume > 0 ? 0 : 1);
+  // Volume slider
+  DOM.volumeSlider?.addEventListener('input', (e) => {
+    Audio.setVolume(parseFloat(e.target.value));
   });
-}
 
-// Progress bar handler
-if (DOM.progressContainer) {
-  DOM.progressContainer.addEventListener('click', (e) => {
-    const audioPlayer = DOM.audioPlayer;
-    if (!AppState.getCurrentTrack() || !audioPlayer?.duration) return;
-    
-    const rect = DOM.progressContainer.getBoundingClientRect();
-    const percent = (e.clientX - rect.left) / rect.width;
-    const seekTime = percent * audioPlayer.duration;
-    
-    AppState.setIsUserInteracting(true);
-    AudioManager.seek(seekTime);
-    SocketManager.emitSeek(seekTime);
-  });
-}
-
-// ============================================================================
-// INITIALIZATION
-// ============================================================================
-
-function initializeApp() {
-  // Initialize managers
-  AudioManager.init();
-  SocketManager.init();
-  
-  // Set initial UI states
-  UIRenderer.updateVolumeUI(AppState.getVolume());
-  UIRenderer.updateRepeatButton(AppState.getRepeatMode());
-  UIRenderer.updateShuffleButton(AppState.isShuffleEnabled());
-  
-  // Add sample data fallback
-  setTimeout(() => {
-    if (AppState.getTracks().length === 0) {
-      console.log('No tracks received from server, loading sample data');
-      const sampleTracks = [
-        {
-          id: '1',
-          name: 'Bohemian Rhapsody',
-          artist: 'Queen',
-          url: '/audio/bohemian-rhapsody.mp3',
-          duration: 355,
-          albumArt: '🎸',
-          likes: 1234
-        },
-        {
-          id: '2',
-          name: 'Stairway to Heaven',
-          artist: 'Led Zeppelin',
-          url: '/audio/stairway-to-heaven.mp3',
-          duration: 482,
-          albumArt: '🎸',
-          likes: 987
-        },
-        {
-          id: '3',
-          name: 'Imagine',
-          artist: 'John Lennon',
-          url: '/audio/imagine.mp3',
-          duration: 183,
-          albumArt: '🎹',
-          likes: 756
-        }
-      ];
-      
-      AppState.setTracks(sampleTracks);
-      AppState.setFilteredTracks(sampleTracks);
-      UIRenderer.renderTrackList(sampleTracks);
+  // Volume icon (mute toggle)
+  DOM.volumeIcon?.addEventListener('click', () => {
+    const cur = AppState.getVolume();
+    DOM.volumeIcon._prevVol = DOM.volumeIcon._prevVol || 1;
+    if (cur > 0) {
+      DOM.volumeIcon._prevVol = cur;
+      Audio.setVolume(0);
+    } else {
+      Audio.setVolume(DOM.volumeIcon._prevVol);
     }
-  }, 2000);
+    if (DOM.volumeSlider) DOM.volumeSlider.value = AppState.getVolume();
+  });
+
+  // Progress bar (click to seek)
+  DOM.progressWrap?.addEventListener('click', (e) => {
+    const a = DOM.audio;
+    if (!AppState.getCurrentTrack() || !a?.duration) return;
+    const rect = DOM.progressWrap.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const pos  = pct * a.duration;
+    AppState.setInteracting();
+    Audio.seek(pos);
+    Sock.seek(pos);
+  });
+
+  // Progress bar (drag to seek)
+  let dragging = false;
+  DOM.progressWrap?.addEventListener('mousedown', (e) => {
+    dragging = true;
+    DOM.progressWrap.classList.add('dragging');
+    seekFromEvent(e);
+  });
+  window.addEventListener('mousemove', (e) => { if (dragging) seekFromEvent(e); });
+  window.addEventListener('mouseup',   () => {
+    if (dragging) { dragging = false; DOM.progressWrap?.classList.remove('dragging'); }
+  });
+  DOM.progressWrap?.addEventListener('touchstart', (e) => {
+    dragging = true;
+    seekFromEvent(e.touches[0]);
+  }, { passive: true });
+  window.addEventListener('touchmove', (e) => {
+    if (dragging) seekFromEvent(e.touches[0]);
+  }, { passive: true });
+  window.addEventListener('touchend', () => { dragging = false; });
+
+  function seekFromEvent(e) {
+    const a    = DOM.audio;
+    const wrap = DOM.progressWrap;
+    if (!wrap || !a?.duration) return;
+    const rect = wrap.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const pos  = pct * a.duration;
+    AppState.setInteracting(800);
+    Audio.seek(pos);
+    if (DOM.progressBar) DOM.progressBar.style.width = `${pct * 100}%`;
+    if (DOM.currentTime) DOM.currentTime.textContent = AppUtils.formatTime(pos);
+    // Throttle seek events to server
+    clearTimeout(seekFromEvent._t);
+    seekFromEvent._t = setTimeout(() => Sock.seek(pos), 200);
+  }
+
+  // Playlist add
+  DOM.addToPlaylist?.addEventListener('click', () => {
+    const cur  = AppState.getCurrentTrack();
+    const name = DOM.playlistSelect?.value;
+    if (!cur || !name) return;
+    Sock.addToPlaylist(name, cur.id);
+  });
+
+  // Search (debounced)
+  DOM.searchInput?.addEventListener('input', AppUtils.debounce((e) => {
+    const q     = e.target.value.toLowerCase().trim();
+    const all   = AppState.getTracks();
+    const found = q ? all.filter(t =>
+      t.name.toLowerCase().includes(q) ||
+      t.artist.toLowerCase().includes(q) ||
+      (t.album && t.album.toLowerCase().includes(q))
+    ) : [...all];
+    AppState.setFilteredTracks(found);
+    UI.renderTrackList(found);
+  }, 250));
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (e.target.matches('input, select, textarea')) return;
+    switch (e.key) {
+      case ' ':          e.preventDefault(); Audio.togglePlay();     break;
+      case 'ArrowRight': e.preventDefault(); Sock.next();            break;
+      case 'ArrowLeft':  e.preventDefault(); Sock.previous();        break;
+      case 'm': case 'M': e.preventDefault(); DOM.volumeIcon?.click(); break;
+      case 'ArrowUp':
+        e.preventDefault();
+        Audio.setVolume(Math.min(1, AppState.getVolume() + 0.1));
+        if (DOM.volumeSlider) DOM.volumeSlider.value = AppState.getVolume();
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        Audio.setVolume(Math.max(0, AppState.getVolume() - 0.1));
+        if (DOM.volumeSlider) DOM.volumeSlider.value = AppState.getVolume();
+        break;
+    }
+  });
+
+  // Media Session API action handlers
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.setActionHandler('play',         () => { Sock.play(AppState.getCurrentTrack()?.id); });
+    navigator.mediaSession.setActionHandler('pause',        () => Sock.pause());
+    navigator.mediaSession.setActionHandler('nexttrack',    () => Sock.next());
+    navigator.mediaSession.setActionHandler('previoustrack', () => Sock.previous());
+  }
 }
 
-// Start the app
-initializeApp();
+// ── App entry point (called by auth module in index.html) ─────────────────────
+
+window.initializeApp = function(socket) {
+  console.log('[app] Initializing with authenticated socket', socket.id);
+
+  // Wire socket listeners
+  Sock.init(socket);
+
+  // Initialize audio engine
+  Audio.init();
+
+  // Restore persisted UI state
+  UI.updateVolume(AppState.getVolume());
+  UI.updateRepeat(AppState.getRepeatMode());
+  UI.updateShuffle(AppState.isShuffleEnabled());
+  if (DOM.volumeSlider) DOM.volumeSlider.value = AppState.getVolume();
+
+  // Attach all user interaction handlers
+  attachEventHandlers();
+
+  console.log('[app] Ready');
+};
