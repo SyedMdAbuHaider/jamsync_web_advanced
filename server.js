@@ -1,22 +1,22 @@
 'use strict';
-// for re commit in the render
-// for re commit in the render
 
 // ─────────────────────────────────────────────────────────────────────────────
-// JamSync – Production Server
+// JamSync – Production Server (R2 Edition)
+// Audio files → Cloudflare R2 (streamed directly to clients)
+// Track metadata → Firebase Realtime DB /tracks
+// Server → pure Socket.IO signaling, zero MP3 buffering
 // ─────────────────────────────────────────────────────────────────────────────
 
-const express    = require('express');
-const http       = require('http');
-const socketIo   = require('socket.io');
-const path       = require('path');
-const fs         = require('fs');
-const admin      = require('firebase-admin');
-const helmet     = require('helmet');
+const express     = require('express');
+const http        = require('http');
+const socketIo    = require('socket.io');
+const path        = require('path');
+const fs          = require('fs');
+const admin       = require('firebase-admin');
+const helmet      = require('helmet');
 const compression = require('compression');
-const rateLimit  = require('express-rate-limit');
-const morgan     = require('morgan');
-const { parseBuffer } = require('music-metadata');
+const rateLimit   = require('express-rate-limit');
+const morgan      = require('morgan');
 
 // ── Environment validation ────────────────────────────────────────────────────
 
@@ -33,15 +33,13 @@ if (missingEnv.length) {
   process.exit(1);
 }
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const PORT        = parseInt(process.env.PORT || '10000', 10);
 const NODE_ENV    = process.env.NODE_ENV || 'development';
 const IS_PROD     = NODE_ENV === 'production';
 const PUBLIC_DIR  = path.join(__dirname, 'public');
-const MUSIC_DIR   = path.join(PUBLIC_DIR, 'music');
-const PLAYLIST_FILE = path.join(__dirname, 'playlists.json');
-const ROOM_TTL_MS = 2 * 60 * 60 * 1000; // auto-delete stale rooms after 2h
+const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
 
 // ── Firebase Admin ────────────────────────────────────────────────────────────
 
@@ -54,30 +52,23 @@ admin.initializeApp({
   databaseURL: process.env.FIREBASE_DATABASE_URL,
 });
 
-const db = admin.database();
+const db         = admin.database();
 const getRoomRef = (code) => db.ref(`rooms/${code}`);
+const tracksRef  = db.ref('tracks');
 
 // ── Express setup ─────────────────────────────────────────────────────────────
 
 const app    = express();
 const server = http.createServer(app);
 
-// Security headers (relaxed for Firebase SDK + Socket.IO CDN resources)
 app.use(helmet({
-  contentSecurityPolicy: false, // managed separately; disable default to avoid breaking Firebase SDK
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
 }));
-
-// Gzip compression
 app.use(compression());
-
-// HTTP logging
 app.use(morgan(IS_PROD ? 'combined' : 'dev'));
-
-// JSON body parsing (for REST endpoints)
 app.use(express.json({ limit: '100kb' }));
 
-// Global API rate limiter (100 req / 15 min per IP)
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -87,21 +78,15 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/', apiLimiter);
 
-// Static files (music + frontend)
+// Static files (frontend only — audio is served from R2, not here)
 app.use(express.static(PUBLIC_DIR, {
   maxAge: IS_PROD ? '7d' : 0,
-  etag:   true,
+  etag: true,
 }));
-
-// ── Music directory bootstrap ─────────────────────────────────────────────────
-
-if (!fs.existsSync(MUSIC_DIR)) {
-  fs.mkdirSync(MUSIC_DIR, { recursive: true });
-  console.warn('[music] Created missing music directory at', MUSIC_DIR);
-}
 
 // ── Playlist persistence ──────────────────────────────────────────────────────
 
+const PLAYLIST_FILE     = path.join(__dirname, 'playlists.json');
 const DEFAULT_PLAYLISTS = { default: [], favorites: [] };
 
 function loadPlaylists() {
@@ -116,9 +101,9 @@ function loadPlaylists() {
   }
 }
 
-function savePlaylists(playlists) {
+function savePlaylists(p) {
   try {
-    fs.writeFileSync(PLAYLIST_FILE, JSON.stringify(playlists, null, 2));
+    fs.writeFileSync(PLAYLIST_FILE, JSON.stringify(p, null, 2));
   } catch (err) {
     console.error('[playlists] Save error:', err.message);
   }
@@ -126,114 +111,71 @@ function savePlaylists(playlists) {
 
 let playlists = loadPlaylists();
 
-// ── Track loading with ID3 metadata ──────────────────────────────────────────
+// ── Track loading from Firebase ───────────────────────────────────────────────
+//
+// Track schema in Firebase Realtime DB at /tracks:
+// {
+//   "track_0": {
+//     "id": "track_0",
+//     "name": "Song Title",
+//     "artist": "Artist Name",
+//     "album": "Album Name",
+//     "duration": 240,
+//     "url": "https://pub-xxxx.r2.dev/music/song.mp3"
+//   },
+//   ...
+// }
+//
+// To add tracks, use the Firebase Console or the /api/admin/tracks POST endpoint below.
 
-async function loadTrackMetadata(filePath, index) {
-  const fileName = path.basename(filePath);
-  const base = {
-    id:       String(index),
-    name:     fileName.replace(/\.mp3$/i, '').replace(/[_-]+/g, ' ').trim(),
-    artist:   'Unknown Artist',
-    album:    '',
-    duration: 0,
-    url:      `/music/${encodeURIComponent(fileName)}`,
-  };
-
-  try {
-    const buffer = fs.readFileSync(filePath);
-    const meta   = await parseBuffer(buffer, { mimeType: 'audio/mpeg' }, { duration: false, skipCovers: true });
-    const { common, format } = meta;
-    return {
-      ...base,
-      name:     common.title  || base.name,
-      artist:   common.artist || base.artist,
-      album:    common.album  || '',
-      duration: Math.round(format.duration || 0),
-    };
-  } catch {
-    return base; // fall back to file-name parsing if metadata read fails
-  }
-}
-
-async function getTracks() {
-  let files = [];
-  try {
-    files = fs.readdirSync(MUSIC_DIR)
-      .filter(f => /\.mp3$/i.test(f))
-      .sort()
-      .map(f => path.join(MUSIC_DIR, f));
-  } catch (err) {
-    console.error('[tracks] Could not read music directory:', err.message);
-    return [];
-  }
-
-  if (!files.length) {
-    console.warn('[tracks] No .mp3 files found in', MUSIC_DIR);
-    return [];
-  }
-
-  const results = await Promise.all(files.map((f, i) => loadTrackMetadata(f, i)));
-  console.log(`[tracks] Loaded ${results.length} track(s)`);
-  return results;
-}
-
-// Cache tracks in memory (re-scan on HUP signal)
 let tracks = [];
 
+async function loadTracksFromFirebase() {
+  try {
+    const snap = await tracksRef.once('value');
+    if (!snap.exists()) {
+      console.warn('[tracks] No tracks found in Firebase at /tracks. Add tracks via the admin API.');
+      return [];
+    }
+    const data   = snap.val();
+    const result = Object.values(data)
+      .filter(t => t && t.url)
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    console.log(`[tracks] Loaded ${result.length} track(s) from Firebase`);
+    return result;
+  } catch (err) {
+    console.error('[tracks] Firebase load error:', err.message);
+    return [];
+  }
+}
+
 (async () => {
-  tracks = await getTracks();
+  tracks = await loadTracksFromFirebase();
 })();
 
-process.on('SIGHUP', async () => {
-  console.log('[tracks] SIGHUP received – rescanning music directory');
-  tracks = await getTracks();
+// Live-sync tracks from Firebase (any admin update reflects immediately)
+tracksRef.on('value', (snap) => {
+  if (!snap.exists()) return;
+  const data   = snap.val();
+  const result = Object.values(data)
+    .filter(t => t && t.url)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  tracks = result;
+  console.log(`[tracks] Live-synced ${tracks.length} track(s) from Firebase`);
 });
 
-// ── Room code generator ───────────────────────────────────────────────────────
-
-const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+// ── Room helpers ──────────────────────────────────────────────────────────────
 
 function generateRoomCode(len = 6) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   return Array.from({ length: len }, () =>
-    ROOM_CHARS[Math.floor(Math.random() * ROOM_CHARS.length)]
+    chars[Math.floor(Math.random() * chars.length)]
   ).join('');
 }
 
 function isValidRoomCode(code) {
   return typeof code === 'string' && /^[A-Z0-9]{4,8}$/.test(code);
 }
-
-// ── Socket.IO ─────────────────────────────────────────────────────────────────
-
-const io = socketIo(server, {
-  cors: {
-    origin: IS_PROD ? process.env.ALLOWED_ORIGIN || false : '*',
-    methods: ['GET', 'POST'],
-  },
-  transports: ['websocket', 'polling'],
-  pingTimeout:  20000,
-  pingInterval: 25000,
-});
-
-// Auth middleware – verify Firebase ID token on every connection
-io.use(async (socket, next) => {
-  const token = socket.handshake.auth?.token;
-  if (!token) return next(new Error('Authentication token missing'));
-
-  try {
-    socket.user = await admin.auth().verifyIdToken(token);
-    next();
-  } catch (err) {
-    console.warn('[socket] Token verify failed:', err.code);
-    next(new Error('Invalid authentication token'));
-  }
-});
-
-// In-memory maps
-const socketRoomMap  = {};  // socketId → roomCode
-const roomListeners  = {};  // socketId → { roomCode, unsubscribeFn }
-
-// ── Room helpers ──────────────────────────────────────────────────────────────
 
 async function getRoomState(roomCode) {
   const snap = await getRoomRef(roomCode).once('value');
@@ -264,13 +206,33 @@ async function playNextTrack(roomCode) {
   });
 }
 
-async function cleanupEmptyRoom(roomCode) {
-  const clients = io.sockets.adapter.rooms.get(roomCode);
-  if (!clients || clients.size === 0) {
-    await getRoomRef(roomCode).remove();
-    console.log(`[room] ${roomCode} deleted – empty`);
+// ── Socket.IO ─────────────────────────────────────────────────────────────────
+
+const io = socketIo(server, {
+  cors: {
+    origin: IS_PROD ? process.env.ALLOWED_ORIGIN || false : '*',
+    methods: ['GET', 'POST'],
+  },
+  transports: ['websocket', 'polling'],
+  pingTimeout:  20000,
+  pingInterval: 25000,
+});
+
+// Auth middleware
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error('Authentication token missing'));
+  try {
+    socket.user = await admin.auth().verifyIdToken(token);
+    next();
+  } catch (err) {
+    console.warn('[socket] Token verify failed:', err.code);
+    next(new Error('Invalid authentication token'));
   }
-}
+});
+
+const socketRoomMap = {};
+const roomListeners = {};
 
 async function leaveCurrentRoom(socket) {
   const roomCode = socketRoomMap[socket.id];
@@ -279,92 +241,91 @@ async function leaveCurrentRoom(socket) {
   socket.leave(roomCode);
   delete socketRoomMap[socket.id];
 
-  const entry = roomListeners[socket.id];
-  if (entry) {
-    getRoomRef(entry.roomCode).off('value', entry.listener);
+  if (roomListeners[socket.id]) {
+    getRoomRef(roomListeners[socket.id].roomCode)
+      .off('value', roomListeners[socket.id].listener);
     delete roomListeners[socket.id];
   }
 
-  setTimeout(() => cleanupEmptyRoom(roomCode), 500);
+  try {
+    const room = await getRoomState(roomCode);
+    if (room?.host === socket.user?.uid) {
+      const clients = io.sockets.adapter.rooms.get(roomCode);
+      if (!clients || clients.size === 0) {
+        await getRoomRef(roomCode).update({ isPlaying: false });
+      }
+    }
+  } catch {}
 }
 
-// ── Socket connection ─────────────────────────────────────────────────────────
-
 io.on('connection', (socket) => {
-  console.log(`[socket] ${socket.id} connected (uid: ${socket.user.uid})`);
+  console.log(`[socket] ${socket.id} connected (${socket.user.uid})`);
 
-  // ─ Create room ──────────────────────────────────────────────────────────────
+  // ─ Create room ───────────────────────────────────────────────────────────────
   socket.on('create-room', async () => {
     try {
-      await leaveCurrentRoom(socket);
-
-      // Find a unique room code
-      let roomCode;
+      let code;
       let attempts = 0;
       do {
-        roomCode = generateRoomCode();
-        const snap = await getRoomRef(roomCode).once('value');
-        if (!snap.exists()) break;
-      } while (++attempts < 20);
+        code = generateRoomCode();
+        const existing = await getRoomState(code);
+        if (!existing) break;
+      } while (++attempts < 5);
 
-      if (attempts >= 20) {
-        socket.emit('room-error', { message: 'Could not generate unique room. Try again.' });
-        return;
-      }
+      const firstTrack = tracks[0] || null;
 
-      await getRoomRef(roomCode).set({
+      await getRoomRef(code).set({
         host:         socket.user.uid,
-        hostEmail:    socket.user.email || null,
-        currentTrack: null,
+        createdAt:    Date.now(),
+        lastUpdate:   Date.now(),
+        currentTrack: firstTrack,
         position:     0,
         isPlaying:    false,
-        lastUpdate:   Date.now(),
-        createdAt:    Date.now(),
-        queue:        [...tracks],
+        queue:        tracks.slice(1),
       });
 
-      socket.join(roomCode);
-      socketRoomMap[socket.id] = roomCode;
+      await leaveCurrentRoom(socket);
+      socket.join(code);
+      socketRoomMap[socket.id] = code;
 
-      socket.emit('room-created', { roomCode });
-      socket.emit('init', {
+      socket.emit('room-created', {
+        code,
         tracks,
         playlists,
         currentState: {
-          currentTrack: null,
+          currentTrack: firstTrack,
           position:     0,
           isPlaying:    false,
           lastUpdate:   Date.now(),
-          queue:        [...tracks],
+          queue:        tracks.slice(1),
         },
       });
 
-      console.log(`[room] ${roomCode} created by ${socket.user.uid}`);
+      console.log(`[room] ${socket.user.uid} created ${code}`);
     } catch (err) {
       console.error('[room] create error:', err);
       socket.emit('room-error', { message: 'Failed to create room.' });
     }
   });
 
-  // ─ Join room ────────────────────────────────────────────────────────────────
-  socket.on('join-room', async ({ roomCode } = {}) => {
+  // ─ Join room ─────────────────────────────────────────────────────────────────
+  socket.on('join-room', async ({ code } = {}) => {
     try {
-      const code = (roomCode || '').toString().trim().toUpperCase();
-      if (!isValidRoomCode(code)) {
+      const upperCode = (code || '').toUpperCase().trim();
+      if (!isValidRoomCode(upperCode)) {
         socket.emit('room-error', { message: 'Invalid room code format.' });
         return;
       }
 
-      const room = await getRoomState(code);
+      const room = await getRoomState(upperCode);
       if (!room) {
         socket.emit('room-error', { message: 'Room not found.' });
         return;
       }
 
       await leaveCurrentRoom(socket);
-
-      socket.join(code);
-      socketRoomMap[socket.id] = code;
+      socket.join(upperCode);
+      socketRoomMap[socket.id] = upperCode;
 
       socket.emit('init', {
         tracks,
@@ -378,13 +339,10 @@ io.on('connection', (socket) => {
         },
       });
 
-      // Subscribe to real-time state changes for this socket
-      const listener = getRoomRef(code).on('value', (snap) => {
+      const listener = getRoomRef(upperCode).on('value', (snap) => {
         const r = snap.val();
         if (!r) return;
-
         const elapsed = r.isPlaying ? (Date.now() - r.lastUpdate) / 1000 : 0;
-
         socket.emit('sync', {
           position:     r.position + elapsed,
           isPlaying:    r.isPlaying,
@@ -393,16 +351,15 @@ io.on('connection', (socket) => {
         });
       });
 
-      roomListeners[socket.id] = { roomCode: code, listener };
-
-      console.log(`[room] ${socket.id} (${socket.user.uid}) joined ${code}`);
+      roomListeners[socket.id] = { roomCode: upperCode, listener };
+      console.log(`[room] ${socket.user.uid} joined ${upperCode}`);
     } catch (err) {
       console.error('[room] join error:', err);
       socket.emit('room-error', { message: 'Failed to join room.' });
     }
   });
 
-  // ─ Host-only playback helper ─────────────────────────────────────────────────
+  // ─ Host-only helper ───────────────────────────────────────────────────────────
   async function requireHost(cb) {
     const roomCode = socketRoomMap[socket.id];
     if (!roomCode) return;
@@ -411,19 +368,17 @@ io.on('connection', (socket) => {
     await cb(roomCode, room);
   }
 
-  // ─ Playback events (host-only) ───────────────────────────────────────────────
+  // ─ Playback (host-only) ───────────────────────────────────────────────────────
   socket.on('play', async ({ trackId } = {}) => {
     await requireHost(async (roomCode) => {
       const track = tracks.find(t => t.id === String(trackId));
       if (!track) return;
-
       await getRoomRef(roomCode).update({
         currentTrack: track,
         position:     0,
         isPlaying:    true,
         lastUpdate:   Date.now(),
       });
-
       io.to(roomCode).emit('track-changed', {
         track,
         position:  0,
@@ -435,15 +390,9 @@ io.on('connection', (socket) => {
 
   socket.on('pause', async () => {
     await requireHost(async (roomCode, room) => {
-      const elapsed   = room.isPlaying ? (Date.now() - room.lastUpdate) / 1000 : 0;
-      const position  = room.position + elapsed;
-
-      await getRoomRef(roomCode).update({
-        position,
-        isPlaying:  false,
-        lastUpdate: Date.now(),
-      });
-
+      const elapsed  = room.isPlaying ? (Date.now() - room.lastUpdate) / 1000 : 0;
+      const position = room.position + elapsed;
+      await getRoomRef(roomCode).update({ position, isPlaying: false, lastUpdate: Date.now() });
       io.to(roomCode).emit('pause', { position, timestamp: Date.now() });
     });
   });
@@ -457,41 +406,30 @@ io.on('connection', (socket) => {
   });
 
   socket.on('next', async () => {
-    await requireHost(async (roomCode) => {
-      await playNextTrack(roomCode);
-    });
+    await requireHost(async (roomCode) => { await playNextTrack(roomCode); });
   });
 
   socket.on('previous', async () => {
     await requireHost(async (roomCode, room) => {
-      const currentId  = room.currentTrack?.id;
-      const currentIdx = tracks.findIndex(t => t.id === currentId);
+      const currentIdx = tracks.findIndex(t => t.id === room.currentTrack?.id);
       const prevTrack  = tracks[(currentIdx - 1 + tracks.length) % tracks.length];
       if (!prevTrack) return;
-
       await getRoomRef(roomCode).update({
         currentTrack: prevTrack,
         position:     0,
         isPlaying:    true,
         lastUpdate:   Date.now(),
       });
-
       io.to(roomCode).emit('track-changed', {
-        track:     prevTrack,
-        position:  0,
-        isPlaying: true,
-        timestamp: Date.now(),
+        track: prevTrack, position: 0, isPlaying: true, timestamp: Date.now(),
       });
     });
   });
 
   socket.on('track-ended', async () => {
-    await requireHost(async (roomCode) => {
-      await playNextTrack(roomCode);
-    });
+    await requireHost(async (roomCode) => { await playNextTrack(roomCode); });
   });
 
-  // ─ Duration reporting (any client) ──────────────────────────────────────────
   socket.on('duration', ({ trackId, duration } = {}) => {
     const track = tracks.find(t => t.id === String(trackId));
     if (track && typeof duration === 'number' && duration > 0) {
@@ -499,15 +437,12 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ─ Playlist management (any authenticated user) ───────────────────────────
   socket.on('add-to-playlist', ({ playlistName, trackId } = {}) => {
     const roomCode = socketRoomMap[socket.id];
     if (!roomCode) return;
-
     const name  = String(playlistName || '').trim().slice(0, 64);
     const track = tracks.find(t => t.id === String(trackId));
     if (!name || !track) return;
-
     if (!playlists[name]) playlists[name] = [];
     if (!playlists[name].some(t => t.id === track.id)) {
       playlists[name].push(track);
@@ -516,14 +451,13 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ─ Disconnect ────────────────────────────────────────────────────────────────
   socket.on('disconnect', async (reason) => {
     console.log(`[socket] ${socket.id} disconnected (${reason})`);
     await leaveCurrentRoom(socket);
   });
 });
 
-// ── REST API endpoints ────────────────────────────────────────────────────────
+// ── REST API ──────────────────────────────────────────────────────────────────
 
 app.get('/api/tracks', (_req, res) => {
   res.json({ count: tracks.length, tracks });
@@ -543,11 +477,57 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Legacy (keep backwards-compat with old client fetches)
+// Admin: add a track (stores metadata in Firebase, URL points to R2)
+// POST /api/admin/tracks
+// Body: { id, name, artist, album, duration, url }
+// Protect this with a secret header in production (ADMIN_SECRET env var)
+app.post('/api/admin/tracks', (req, res) => {
+  const secret = process.env.ADMIN_SECRET;
+  if (secret && req.headers['x-admin-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { id, name, artist, album, duration, url } = req.body;
+  if (!id || !name || !url) {
+    return res.status(400).json({ error: 'id, name, and url are required' });
+  }
+
+  const track = {
+    id:       String(id),
+    name:     String(name).trim(),
+    artist:   String(artist || 'Unknown Artist').trim(),
+    album:    String(album || '').trim(),
+    duration: Number(duration) || 0,
+    url:      String(url).trim(),
+  };
+
+  tracksRef.child(track.id).set(track, (err) => {
+    if (err) {
+      console.error('[admin] Track save error:', err.message);
+      return res.status(500).json({ error: 'Failed to save track' });
+    }
+    res.status(201).json({ success: true, track });
+  });
+});
+
+// Admin: delete a track
+app.delete('/api/admin/tracks/:id', (req, res) => {
+  const secret = process.env.ADMIN_SECRET;
+  if (secret && req.headers['x-admin-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  tracksRef.child(req.params.id).remove((err) => {
+    if (err) return res.status(500).json({ error: 'Failed to delete track' });
+    res.json({ success: true });
+  });
+});
+
+// Legacy compat
 app.get('/tracks',    (_req, res) => res.json(tracks));
 app.get('/playlists', (_req, res) => res.json(playlists));
 
-// 404 catch-all (SPA fallback)
+// SPA fallback
 app.use((_req, res) => {
   const index = path.join(PUBLIC_DIR, 'index.html');
   if (fs.existsSync(index)) {
@@ -557,7 +537,6 @@ app.use((_req, res) => {
   }
 });
 
-// Global error handler
 app.use((err, _req, res, _next) => {
   console.error('[http] Unhandled error:', err);
   res.status(500).json({ error: IS_PROD ? 'Internal server error' : err.message });
@@ -567,8 +546,8 @@ app.use((err, _req, res, _next) => {
 
 setInterval(async () => {
   try {
-    const snap = await db.ref('rooms').once('value');
-    const rooms = snap.val() || {};
+    const snap   = await db.ref('rooms').once('value');
+    const rooms  = snap.val() || {};
     const cutoff = Date.now() - ROOM_TTL_MS;
     const stale  = Object.entries(rooms)
       .filter(([, r]) => r.lastUpdate < cutoff)
@@ -589,12 +568,10 @@ setInterval(async () => {
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 async function gracefulShutdown(signal) {
-  console.log(`[shutdown] ${signal} received – shutting down`);
+  console.log(`[shutdown] ${signal} received`);
+  tracksRef.off(); // detach Firebase listener
   server.close(async () => {
-    try {
-      await admin.app().delete();
-    } catch {}
-    console.log('[shutdown] Clean exit');
+    try { await admin.app().delete(); } catch {}
     process.exit(0);
   });
   setTimeout(() => process.exit(1), 10_000);
@@ -602,14 +579,12 @@ async function gracefulShutdown(signal) {
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
-
 process.on('uncaughtException',  (err) => console.error('[uncaught]',  err));
 process.on('unhandledRejection', (err) => console.error('[unhandled]', err));
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 server.listen(PORT, () => {
-  console.log(`[boot] JamSync running on http://localhost:${PORT} (${NODE_ENV})`);
-  console.log(`[boot] Music dir: ${MUSIC_DIR}`);
-  console.log(`[boot] Tracks loaded: ${tracks.length} (may still be scanning)`);
+  console.log(`[boot] JamSync (R2 Edition) running on http://localhost:${PORT} (${NODE_ENV})`);
+  console.log(`[boot] Tracks loaded: ${tracks.length} (may still be syncing from Firebase)`);
 });
