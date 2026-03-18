@@ -786,7 +786,7 @@ function createSocket(idToken) {
     // Auto-rejoin room after reconnect
     const saved = localStorage.getItem('jamSync_room');
     if (saved) {
-      sock.emit('join-room', { roomCode: saved });
+      sock.emit('join-room', { code: saved });
     } else {
       showRoom(true);
     }
@@ -855,7 +855,7 @@ joinRoomBtn.addEventListener('click', () => {
   if (!activeSocket?.connected) { roomError.textContent = 'Not connected yet.'; return; }
   setRoomBusy(true);
   roomError.textContent = '';
-  activeSocket.emit('join-room', { roomCode: code });
+  activeSocket.emit('join-room', { code: code });
 });
 
 roomCodeInput.addEventListener('keydown', (e) => {
