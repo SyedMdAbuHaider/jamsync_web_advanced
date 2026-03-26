@@ -812,13 +812,41 @@ function createSocket(idToken) {
   });
 
   // Room events
-  sock.on('room-created', ({ roomCode }) => {
+  sock.on('room-created', ({ code, tracks, playlists, currentState }) => {
     setRoomBusy(false);
     roomError.textContent = '';
     roomCodeInput.value   = '';
-    localStorage.setItem('jamSync_room', roomCode);
-    updateRoomBadge(roomCode);
+    // Bug fix: server emits `code`, not `roomCode`
+    localStorage.setItem('jamSync_room', code);
+    updateRoomBadge(code);
     showRoom(false);
+
+    // Bug fix: room-created never loaded tracks — manually trigger the same
+    // initialisation logic that the `init` event does on join-room.
+    if (typeof AppState !== 'undefined') {
+      AppState.setTracks(tracks || []);
+      AppState.setFilteredTracks(AppState.getTracks());
+      AppState.setPlaylists(playlists || {});
+      UI.renderTrackList(AppState.getFilteredTracks());
+      UI.updatePlaylistDropdown();
+
+      if (currentState?.currentTrack) {
+        Audio.loadTrack(
+          currentState.currentTrack,
+          currentState.position  || 0,
+          currentState.isPlaying || false,
+        );
+      }
+
+      if (!AppState.getTracks().length) {
+        DOM.musicList.innerHTML = `
+          <div style="text-align:center;padding:40px 20px;color:var(--muted);font-size:.85rem;line-height:1.7">
+            <div style="font-size:2.5rem;margin-bottom:12px">🎵</div>
+            No tracks found in Firebase.<br>
+            Upload MP3s to R2, then run <code style="color:var(--lime)">upload-tracks.js</code> to sync Firebase.
+          </div>`;
+      }
+    }
   });
 
   sock.on('init', () => {
