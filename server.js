@@ -129,6 +129,7 @@ let playlists = loadPlaylists();
 // To add tracks, use the Firebase Console or the /api/admin/tracks POST endpoint below.
 
 let tracks = [];
+let tracksReady = false;
 
 async function loadTracksFromFirebase() {
   try {
@@ -151,6 +152,7 @@ async function loadTracksFromFirebase() {
 
 (async () => {
   tracks = await loadTracksFromFirebase();
+  tracksReady = true;
 })();
 
 // Live-sync tracks from Firebase (any admin update reflects immediately)
@@ -272,7 +274,18 @@ io.on('connection', (socket) => {
         if (!existing) break;
       } while (++attempts < 5);
 
-      const firstTrack = tracks[0] || null;
+      // Bug fix: if Firebase hasn't finished loading tracks yet, do a one-shot
+      // fetch so the first room is never created with an empty track list.
+      let roomTracks = tracks;
+      if (!tracksReady || !roomTracks.length) {
+        roomTracks = await loadTracksFromFirebase();
+        if (roomTracks.length) {
+          tracks = roomTracks; // prime the in-memory cache
+          tracksReady = true;
+        }
+      }
+
+      const firstTrack = roomTracks[0] || null;
 
       await getRoomRef(code).set({
         host:         socket.user.uid,
@@ -281,7 +294,7 @@ io.on('connection', (socket) => {
         currentTrack: firstTrack,
         position:     0,
         isPlaying:    false,
-        queue:        tracks.slice(1),
+        queue:        roomTracks.slice(1),
       });
 
       await leaveCurrentRoom(socket);
@@ -290,14 +303,14 @@ io.on('connection', (socket) => {
 
       socket.emit('room-created', {
         code,
-        tracks,
+        tracks:    roomTracks,
         playlists,
         currentState: {
           currentTrack: firstTrack,
           position:     0,
           isPlaying:    false,
           lastUpdate:   Date.now(),
-          queue:        tracks.slice(1),
+          queue:        roomTracks.slice(1),
         },
       });
 
