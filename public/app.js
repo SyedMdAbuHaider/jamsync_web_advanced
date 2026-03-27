@@ -396,6 +396,7 @@ const Audio = (() => {
     UI.updateActiveTrack();
     AppUtils.updateMediaSession(AppState.getCurrentTrack(), true);
     DOM.albumArt?.classList.add('playing-glow');
+    Visualizer.resume();
   }
 
   function onPause() {
@@ -501,6 +502,167 @@ const Audio = (() => {
   return { init, loadTrack, seek, setVolume, togglePlay };
 })();
 
+// ── Beat Visualizer ───────────────────────────────────────────────────────────
+
+const Visualizer = (() => {
+  let ctx, canvas, audioCtx, analyser, source, animId;
+  let particles = [];
+  let connected = false;
+
+  const BEAT_COOLDOWN = 280; // ms minimum between beat triggers
+  let lastBeatTime  = 0;
+  let beatHistory   = new Float32Array(48);
+  let beatIdx       = 0;
+
+  // ── Particle ────────────────────────────────────────────────────────────────
+  class Particle {
+    constructor(cx, cy, beat) {
+      const angle   = Math.random() * Math.PI * 2;
+      const speed   = beat ? (2.5 + Math.random() * 5) : (0.4 + Math.random() * 1.2);
+      this.x     = cx + (Math.random() - 0.5) * 8;
+      this.y     = cy + (Math.random() - 0.5) * 8;
+      this.vx    = Math.cos(angle) * speed;
+      this.vy    = Math.sin(angle) * speed;
+      this.life  = 1;
+      this.decay = beat ? (0.016 + Math.random() * 0.02) : (0.035 + Math.random() * 0.04);
+      this.r     = beat ? (2 + Math.random() * 3.5)      : (0.8 + Math.random() * 1.2);
+      this.hue   = 68 + Math.random() * 28; // lime-green range
+    }
+    update() {
+      this.x    += this.vx;
+      this.y    += this.vy;
+      this.vx   *= 0.95;
+      this.vy   *= 0.95;
+      this.life -= this.decay;
+    }
+    draw(c) {
+      if (this.life <= 0) return;
+      c.save();
+      c.globalAlpha  = Math.max(0, this.life);
+      c.beginPath();
+      c.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+      c.fillStyle   = `hsl(${this.hue},95%,65%)`;
+      c.shadowColor = `hsl(${this.hue},100%,60%)`;
+      c.shadowBlur  = 10;
+      c.fill();
+      c.restore();
+    }
+  }
+
+  function detectBeat(bassEnergy) {
+    const avg = beatHistory.reduce((a, b) => a + b, 0) / beatHistory.length;
+    beatHistory[beatIdx++ % beatHistory.length] = bassEnergy;
+    const now = performance.now();
+    if (bassEnergy > avg * 1.45 && bassEnergy > 30 && now - lastBeatTime > BEAT_COOLDOWN) {
+      lastBeatTime = now;
+      return true;
+    }
+    return false;
+  }
+
+  function tick() {
+    animId = requestAnimationFrame(tick);
+    if (!ctx || !analyser || !canvas) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const w   = canvas.width  / dpr;
+    const h   = canvas.height / dpr;
+    const cx  = w / 2;
+    const cy  = h / 2;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(data);
+
+    const bass = (data[0] + data[1] + data[2] + data[3] + data[4] + data[5]) / 6;
+    const mid  = (data[8] + data[9] + data[10] + data[11]) / 4;
+    const beat = detectBeat(bass);
+    const playing = AppState.isPlaying();
+
+    // Spawn particles
+    if (playing && (bass > 18 || mid > 12)) {
+      const count = beat ? (10 + Math.floor(Math.random() * 8)) : (Math.random() < 0.25 ? 1 : 0);
+      for (let i = 0; i < count; i++) particles.push(new Particle(cx, cy, beat));
+    }
+
+    // Update & draw particles
+    particles = particles.filter(p => p.life > 0);
+    particles.forEach(p => { p.update(); p.draw(ctx); });
+
+    // Radial glow on beat
+    if (beat && playing && bass > 40) {
+      const r    = Math.min(w, h) * 0.72;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grad.addColorStop(0,   'rgba(200,245,60,0.22)');
+      grad.addColorStop(0.5, 'rgba(200,245,60,0.07)');
+      grad.addColorStop(1,   'rgba(200,245,60,0)');
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, bass / 120);
+      ctx.fillStyle   = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+  }
+
+  // ── Public ──────────────────────────────────────────────────────────────────
+  function init() {
+    const artEl = DOM.albumArt;
+    if (!artEl) return;
+
+    const wrap = artEl.closest('.player-art');
+    if (!wrap) return;
+
+    wrap.style.position = 'relative';
+    wrap.style.overflow = 'hidden';
+
+    canvas = document.createElement('canvas');
+    canvas.style.cssText = [
+      'position:absolute', 'inset:0', 'width:100%', 'height:100%',
+      'border-radius:inherit', 'pointer-events:none', 'z-index:0',
+    ].join(';');
+    wrap.insertBefore(canvas, wrap.firstChild);
+
+    // Keep art emoji above canvas
+    artEl.style.position = 'relative';
+    artEl.style.zIndex   = '1';
+
+    ctx = canvas.getContext('2d');
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width  = wrap.offsetWidth  * dpr;
+      canvas.height = wrap.offsetHeight * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    resize();
+    new ResizeObserver(resize).observe(wrap);
+  }
+
+  function connect(audioEl) {
+    if (connected || !audioEl) return;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser  = audioCtx.createAnalyser();
+      analyser.fftSize               = 256;
+      analyser.smoothingTimeConstant = 0.78;
+      source = audioCtx.createMediaElementSource(audioEl);
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      connected = true;
+      tick();
+    } catch (e) {
+      console.warn('[visualizer] Web Audio init failed:', e.message);
+    }
+  }
+
+  function resume() {
+    if (audioCtx?.state === 'suspended') audioCtx.resume().catch(() => {});
+  }
+
+  return { init, connect, resume };
+})();
+
 // ── Socket communication ──────────────────────────────────────────────────────
 
 // `socket` is injected by initializeApp()
@@ -542,7 +704,7 @@ const Sock = {
           <div style="text-align:center;padding:40px 20px;color:var(--muted);font-size:.85rem;line-height:1.7">
             <div style="font-size:2.5rem;margin-bottom:12px">🎵</div>
             No tracks found.<br>
-            Upload MP3s to R2, then run <code style="color:var(--lime)">upload-tracks.js</code> to sync Firebase.
+            Add <code style="color:var(--lime)">.mp3</code> files to the <code style="color:var(--lime)">public/music/</code> folder on the server.
           </div>`;
         if (DOM.trackCount) DOM.trackCount.textContent = '0';
       }
@@ -808,6 +970,10 @@ window.initializeApp = function(socket) {
 
   // Initialize audio engine
   Audio.init();
+
+  // Initialize and connect beat visualizer
+  Visualizer.init();
+  Visualizer.connect(DOM.audio);
 
   // Restore persisted UI state
   UI.updateVolume(AppState.getVolume());
