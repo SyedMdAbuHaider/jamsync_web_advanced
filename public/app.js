@@ -1,5 +1,4 @@
 'use strict';
-//UPDATE
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JamSync Client — app.js
@@ -116,7 +115,7 @@ const AppUtils = {
   },
 
   randomEmoji() {
-    const pool = [ '🎵'];
+    const pool = ['🎵'];
     return pool[Math.floor(Math.random() * pool.length)];
   },
 
@@ -397,7 +396,7 @@ const Audio = (() => {
     UI.updateActiveTrack();
     AppUtils.updateMediaSession(AppState.getCurrentTrack(), true);
     DOM.albumArt?.classList.add('playing-glow');
-    Visualizer.resume(DOM.audio);
+    Visualizer.resume();
   }
 
   function onPause() {
@@ -638,6 +637,16 @@ const Visualizer = (() => {
     }
     resize();
     new ResizeObserver(resize).observe(wrap);
+
+    // Browsers auto-suspend AudioContexts created without a user gesture.
+    // Resume it on the very first interaction so the analyser gets real data.
+    function resumeOnGesture() {
+      if (audioCtx?.state === 'suspended') audioCtx.resume().catch(() => {});
+      document.removeEventListener('click',      resumeOnGesture);
+      document.removeEventListener('touchstart', resumeOnGesture);
+    }
+    document.addEventListener('click',      resumeOnGesture, { once: true, capture: true });
+    document.addEventListener('touchstart', resumeOnGesture, { once: true, capture: true });
   }
 
   function connect(audioEl) {
@@ -657,11 +666,7 @@ const Visualizer = (() => {
     }
   }
 
-  function resume(audioEl) {
-    // Lazy-connect on first user gesture (required by browser autoplay policy)
-    if (!connected && (audioEl || DOM.audio)) {
-      connect(audioEl || DOM.audio);
-    }
+  function resume() {
     if (audioCtx?.state === 'suspended') audioCtx.resume().catch(() => {});
   }
 
@@ -976,8 +981,9 @@ window.initializeApp = function(socket) {
   // Initialize audio engine
   Audio.init();
 
-  // Initialize and connect beat visualizer (AudioContext created lazily on first play)
+  // Initialize and connect beat visualizer
   Visualizer.init();
+  Visualizer.connect(DOM.audio);
 
   // Restore persisted UI state
   UI.updateVolume(AppState.getVolume());
