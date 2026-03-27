@@ -129,7 +129,6 @@ let playlists = loadPlaylists();
 // To add tracks, use the Firebase Console or the /api/admin/tracks POST endpoint below.
 
 let tracks = [];
-let tracksReady = false;
 
 async function loadTracksFromFirebase() {
   try {
@@ -152,7 +151,6 @@ async function loadTracksFromFirebase() {
 
 (async () => {
   tracks = await loadTracksFromFirebase();
-  tracksReady = true;
 })();
 
 // Live-sync tracks from Firebase (any admin update reflects immediately)
@@ -254,7 +252,13 @@ async function leaveCurrentRoom(socket) {
     if (room?.host === socket.user?.uid) {
       const clients = io.sockets.adapter.rooms.get(roomCode);
       if (!clients || clients.size === 0) {
+        // Host left and room is empty — delete it immediately
+        await getRoomRef(roomCode).remove();
+        console.log(`[room] Deleted empty room ${roomCode} (host disconnected)`);
+      } else {
+        // Host left but others remain — just pause
         await getRoomRef(roomCode).update({ isPlaying: false });
+        console.log(`[room] Host left ${roomCode}, paused (${clients.size} listeners remain)`);
       }
     }
   } catch {}
@@ -274,18 +278,7 @@ io.on('connection', (socket) => {
         if (!existing) break;
       } while (++attempts < 5);
 
-      // Bug fix: if Firebase hasn't finished loading tracks yet, do a one-shot
-      // fetch so the first room is never created with an empty track list.
-      let roomTracks = tracks;
-      if (!tracksReady || !roomTracks.length) {
-        roomTracks = await loadTracksFromFirebase();
-        if (roomTracks.length) {
-          tracks = roomTracks; // prime the in-memory cache
-          tracksReady = true;
-        }
-      }
-
-      const firstTrack = roomTracks[0] || null;
+      const firstTrack = tracks[0] || null;
 
       await getRoomRef(code).set({
         host:         socket.user.uid,
@@ -294,7 +287,7 @@ io.on('connection', (socket) => {
         currentTrack: firstTrack,
         position:     0,
         isPlaying:    false,
-        queue:        roomTracks.slice(1),
+        queue:        tracks.slice(1),
       });
 
       await leaveCurrentRoom(socket);
@@ -303,14 +296,14 @@ io.on('connection', (socket) => {
 
       socket.emit('room-created', {
         code,
-        tracks:    roomTracks,
+        tracks,
         playlists,
         currentState: {
           currentTrack: firstTrack,
           position:     0,
           isPlaying:    false,
           lastUpdate:   Date.now(),
-          queue:        roomTracks.slice(1),
+          queue:        tracks.slice(1),
         },
       });
 
@@ -556,23 +549,29 @@ app.use((err, _req, res, _next) => {
 });
 
 // ── Stale-room cleanup (every 30 min) ────────────────────────────────────────
+// Rooms are deleted when:
+//   (a) The host disconnects and no one else is in the room, OR
+//   (b) The room has been inactive (no lastUpdate) for ROOM_TTL_MS (2 hours)
 
 setInterval(async () => {
   try {
     const snap   = await db.ref('rooms').once('value');
     const rooms  = snap.val() || {};
     const cutoff = Date.now() - ROOM_TTL_MS;
-    const stale  = Object.entries(rooms)
-      .filter(([, r]) => r.lastUpdate < cutoff)
-      .map(([code]) => code);
+    let cleaned  = 0;
 
-    for (const code of stale) {
-      const clients = io.sockets.adapter.rooms.get(code);
-      if (!clients || clients.size === 0) {
+    for (const [code, room] of Object.entries(rooms)) {
+      const isStale   = room.lastUpdate < cutoff;
+      const hasNoOne  = !io.sockets.adapter.rooms.get(code)?.size;
+
+      if (isStale && hasNoOne) {
         await getRoomRef(code).remove();
-        console.log(`[cleanup] Removed stale room ${code}`);
+        console.log(`[cleanup] Deleted stale room ${code} (inactive >${ROOM_TTL_MS / 3600000}h, empty)`);
+        cleaned++;
       }
     }
+
+    if (cleaned === 0) console.log('[cleanup] No stale rooms found');
   } catch (err) {
     console.error('[cleanup] Error:', err.message);
   }
