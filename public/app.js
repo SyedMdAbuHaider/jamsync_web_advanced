@@ -115,7 +115,7 @@ const AppUtils = {
   },
 
   randomEmoji() {
-    const pool = ['📀', '🎵', '🎸', '🎹', '🎤', '🥁', '🎧', '💿', '🎺', '🎻'];
+    const pool = [ '🎵'];
     return pool[Math.floor(Math.random() * pool.length)];
   },
 
