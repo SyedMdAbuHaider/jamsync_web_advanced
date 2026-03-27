@@ -396,7 +396,7 @@ const Audio = (() => {
     UI.updateActiveTrack();
     AppUtils.updateMediaSession(AppState.getCurrentTrack(), true);
     DOM.albumArt?.classList.add('playing-glow');
-    Visualizer.resume();
+    Visualizer.resume(DOM.audio);
   }
 
   function onPause() {
@@ -570,7 +570,7 @@ const Visualizer = (() => {
     const cx  = w / 2;
     const cy  = h / 2;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, w, h);
 
     const data = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(data);
@@ -656,7 +656,11 @@ const Visualizer = (() => {
     }
   }
 
-  function resume() {
+  function resume(audioEl) {
+    // Lazy-connect on first user gesture (required by browser autoplay policy)
+    if (!connected && (audioEl || DOM.audio)) {
+      connect(audioEl || DOM.audio);
+    }
     if (audioCtx?.state === 'suspended') audioCtx.resume().catch(() => {});
   }
 
@@ -971,9 +975,8 @@ window.initializeApp = function(socket) {
   // Initialize audio engine
   Audio.init();
 
-  // Initialize and connect beat visualizer
+  // Initialize and connect beat visualizer (AudioContext created lazily on first play)
   Visualizer.init();
-  Visualizer.connect(DOM.audio);
 
   // Restore persisted UI state
   UI.updateVolume(AppState.getVolume());
